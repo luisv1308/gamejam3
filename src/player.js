@@ -21,11 +21,19 @@ export function createPlayer(scene, gx, gz) {
     gx,
     gz,
     mesh,
+    /** Dirección del shift (flechas); independiente del movimiento WASD. */
+    aim: { x: 0, z: -1 },
     facing: { ...DIRS.N },
     animFrom: null,
     animTo: null,
     animT: 0,
   };
+}
+
+/** Flechas: apuntar sin mover (cardinal). */
+export function setPlayerAim(player, x, z) {
+  player.aim.x = x;
+  player.aim.z = z;
 }
 
 export function setFacingFromMove(player, dx, dz) {

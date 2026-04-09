@@ -1,7 +1,7 @@
 import * as THREE from 'three';
-import { GRID_SIZE, TILE_SIZE, PLAYER_SPEED, ENEMY_SPEED } from './constants.js';
-import { gridToWorld, isWalkable, collectEnemiesInFront } from './grid.js';
-import { createPlayer, setFacingFromMove } from './player.js';
+import { GRID_SIZE, TILE_SIZE, PLAYER_SPEED, ENEMY_SPEED, SHIFT_MAX_RANGE } from './constants.js';
+import { gridToWorld, isWalkable, collectEnemiesInFront, isInsideGrid } from './grid.js';
+import { createPlayer, setFacingFromMove, setPlayerAim } from './player.js';
 import { makeEnemy, EnemyType } from './enemy.js';
 import {
   resolveShift,
@@ -9,15 +9,39 @@ import {
   countLivingEnemies,
   Phase,
 } from './turnManager.js';
+import { Shockwave } from './effects/shockwave.js';
 
 // ——— Game state ———
 let scene;
 let camera;
 let renderer;
+let shockwave;
+/** Posición de reposo de la cámara (para screen-shake sin deriva). */
+let cameraRest;
+let aimIndicator;
+let shiftPreviewLine;
+/** Planos sobre el suelo: una por casilla de alcance del shift. */
+let rangeTileMeshes = [];
+let rangeHighlightGeom = null;
 let player;
 let enemies = [];
 let phase = Phase.PLAYER;
 let busy = false;
+
+/** Cian base | rojo fuerte | amarillo combo | morado especial (victoria). */
+function pickShiftWaveColor(lineLen, destroyed, lost, won) {
+  if (lost) return 0xff4444;
+  if (won) return 0xaa44ff;
+  if (destroyed >= 2 || lineLen >= 3) return 0xff4444;
+  if (lineLen >= 2) return 0xffdd44;
+  return 0x00ffff;
+}
+
+function applyShiftCameraShake() {
+  camera.position.x = cameraRest.x + (Math.random() - 0.5) * 0.1;
+  camera.position.y = cameraRest.y;
+  camera.position.z = cameraRest.z + (Math.random() - 0.5) * 0.1;
+}
 
 function enemyAt(gx, gz) {
   for (const e of enemies) {
@@ -96,9 +120,96 @@ function startPlayerMove(dx, dz) {
   busy = true;
 }
 
+function hideRangeTileHighlights() {
+  for (const m of rangeTileMeshes) {
+    m.visible = false;
+  }
+}
+
+function clearShiftPreview() {
+  hideRangeTileHighlights();
+  for (const e of enemies) {
+    if (e.pendingRemove) continue;
+    e.mesh.material.emissive.setHex(0x000000);
+    e.mesh.material.emissiveIntensity = 0;
+  }
+}
+
+function updateAimVisuals() {
+  if (!aimIndicator || !shiftPreviewLine) return;
+
+  if (phase !== Phase.PLAYER || busy) {
+    aimIndicator.visible = false;
+    shiftPreviewLine.visible = false;
+    clearShiftPreview();
+    return;
+  }
+
+  const ax = player.aim.x;
+  const az = player.aim.z;
+
+  for (let i = 0; i < SHIFT_MAX_RANGE; i++) {
+    const mesh = rangeTileMeshes[i];
+    if (!mesh) continue;
+    const gx = player.gx + ax * (i + 1);
+    const gz = player.gz + az * (i + 1);
+    if (!isInsideGrid(gx, gz)) {
+      mesh.visible = false;
+      continue;
+    }
+    const w = gridToWorld(gx, gz);
+    mesh.position.set(w.x, 0.028, w.z);
+    mesh.visible = true;
+    const target = enemyAt(gx, gz);
+    if (target) {
+      mesh.material.color.setHex(0xffaa44);
+      mesh.material.opacity = 0.52;
+    } else {
+      mesh.material.color.setHex(0x3d9eff);
+      mesh.material.opacity = 0.36;
+    }
+  }
+
+  aimIndicator.visible = true;
+  shiftPreviewLine.visible = true;
+  const p = gridToWorld(player.gx, player.gz);
+  aimIndicator.position.set(p.x + ax * 0.45, 0.08, p.z + az * 0.45);
+  aimIndicator.rotation.y = Math.atan2(ax, az);
+
+  const w0 = gridToWorld(player.gx, player.gz);
+  const pts = [new THREE.Vector3(w0.x, 0.04, w0.z)];
+  let gx = player.gx + ax;
+  let gz = player.gz + az;
+  let steps = 0;
+  while (isInsideGrid(gx, gz) && steps < SHIFT_MAX_RANGE) {
+    const w = gridToWorld(gx, gz);
+    pts.push(new THREE.Vector3(w.x, 0.04, w.z));
+    gx += ax;
+    gz += az;
+    steps++;
+  }
+  if (pts.length === 1) {
+    pts.push(new THREE.Vector3(w0.x + ax * 0.35, 0.04, w0.z + az * 0.35));
+  }
+  shiftPreviewLine.geometry.dispose();
+  shiftPreviewLine.geometry = new THREE.BufferGeometry().setFromPoints(pts);
+
+  const inLine = new Set(collectEnemiesInFront(player.gx, player.gz, ax, az, enemies));
+  for (const e of enemies) {
+    if (e.pendingRemove) continue;
+    if (inLine.has(e)) {
+      e.mesh.material.emissive.setHex(0x88ffcc);
+      e.mesh.material.emissiveIntensity = 0.72;
+    } else {
+      e.mesh.material.emissive.setHex(0x000000);
+      e.mesh.material.emissiveIntensity = 0;
+    }
+  }
+}
+
 function startShift() {
-  const dx = player.facing.dx;
-  const dz = player.facing.dz;
+  const dx = player.aim.x;
+  const dz = player.aim.z;
   const line = collectEnemiesInFront(player.gx, player.gz, dx, dz, enemies);
   if (line.length === 0) return;
 
@@ -106,6 +217,14 @@ function startShift() {
   const snap = enemies.map((e) => ({ e, gx: e.gx, gz: e.gz }));
 
   const r = resolveShift(player, enemies, () => {});
+
+  const destroyed = snap.filter(({ e }) => e.pendingRemove).length;
+  const won = countLivingEnemies(enemies) === 0;
+  const waveColor = pickShiftWaveColor(line.length, destroyed, r.lost, won);
+
+  const pw = gridToWorld(player.gx, player.gz);
+  shockwave.trigger(pw.x, pw.z, dx, dz, waveColor);
+  applyShiftCameraShake();
 
   if (r.lost) {
     setGameOver(false);
@@ -233,19 +352,46 @@ function tickAnimations(dt) {
 }
 
 function onKeyDown(ev) {
+  if (phase === Phase.GAME_OVER) return;
+
+  if (ev.code === 'Space') {
+    if (phase === Phase.PLAYER && !busy) {
+      ev.preventDefault();
+      startShift();
+    }
+    return;
+  }
+
+  if (ev.code === 'ArrowUp') {
+    ev.preventDefault();
+    if (phase === Phase.PLAYER && !busy) setPlayerAim(player, 0, -1);
+    return;
+  }
+  if (ev.code === 'ArrowDown') {
+    ev.preventDefault();
+    if (phase === Phase.PLAYER && !busy) setPlayerAim(player, 0, 1);
+    return;
+  }
+  if (ev.code === 'ArrowLeft') {
+    ev.preventDefault();
+    if (phase === Phase.PLAYER && !busy) setPlayerAim(player, -1, 0);
+    return;
+  }
+  if (ev.code === 'ArrowRight') {
+    ev.preventDefault();
+    if (phase === Phase.PLAYER && !busy) setPlayerAim(player, 1, 0);
+    return;
+  }
+
   if (phase !== Phase.PLAYER || busy) return;
 
   let dx = 0;
   let dz = 0;
-  if (ev.code === 'KeyW' || ev.code === 'ArrowUp') dz = -1;
-  else if (ev.code === 'KeyS' || ev.code === 'ArrowDown') dz = 1;
-  else if (ev.code === 'KeyA' || ev.code === 'ArrowLeft') dx = -1;
-  else if (ev.code === 'KeyD' || ev.code === 'ArrowRight') dx = 1;
-  else if (ev.code === 'Space') {
-    ev.preventDefault();
-    startShift();
-    return;
-  } else return;
+  if (ev.code === 'KeyW') dz = -1;
+  else if (ev.code === 'KeyS') dz = 1;
+  else if (ev.code === 'KeyA') dx = -1;
+  else if (ev.code === 'KeyD') dx = 1;
+  else return;
 
   if (dx !== 0 && dz !== 0) return;
   ev.preventDefault();
@@ -287,6 +433,7 @@ function setupScene() {
   );
   camera.position.set(12, 18, 12);
   camera.lookAt(0, 0, 0);
+  cameraRest = new THREE.Vector3().copy(camera.position);
 
   const amb = new THREE.AmbientLight(0xffffff, 0.45);
   scene.add(amb);
@@ -308,11 +455,50 @@ function setupScene() {
   renderer.shadowMap.enabled = true;
   document.body.appendChild(renderer.domElement);
 
+  shockwave = new Shockwave(scene);
+
   buildGrid();
 
   const startGx = 1;
   const startGz = 1;
   player = createPlayer(scene, startGx, startGz);
+
+  const aimGeom = new THREE.BoxGeometry(0.18, 0.06, 0.9);
+  const aimMat = new THREE.MeshBasicMaterial({ color: 0xffff00 });
+  aimIndicator = new THREE.Mesh(aimGeom, aimMat);
+  scene.add(aimIndicator);
+
+  const lineMat = new THREE.LineBasicMaterial({
+    color: 0x66ffcc,
+    transparent: true,
+    opacity: 0.9,
+  });
+  shiftPreviewLine = new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(0, 0.04, 0),
+      new THREE.Vector3(0.01, 0.04, 0),
+    ]),
+    lineMat
+  );
+  scene.add(shiftPreviewLine);
+
+  rangeHighlightGeom = new THREE.PlaneGeometry(TILE_SIZE * 0.88, TILE_SIZE * 0.88);
+  rangeTileMeshes = [];
+  for (let i = 0; i < SHIFT_MAX_RANGE; i++) {
+    const mat = new THREE.MeshBasicMaterial({
+      color: 0x3d9eff,
+      transparent: true,
+      opacity: 0.36,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    const m = new THREE.Mesh(rangeHighlightGeom, mat);
+    m.rotation.x = -Math.PI / 2;
+    m.renderOrder = 2;
+    m.visible = false;
+    scene.add(m);
+    rangeTileMeshes.push(m);
+  }
 
   enemies.push(makeEnemy(EnemyType.CHASER, 5, 1, scene));
   enemies.push(makeEnemy(EnemyType.CHASER, 6, 6, scene));
@@ -339,6 +525,8 @@ function animate(now) {
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
   tickAnimations(dt);
+  shockwave?.update(dt);
+  updateAimVisuals();
   renderer.render(scene, camera);
 }
 

@@ -13,13 +13,13 @@ function posKey(gx, gz) {
 }
 
 /**
- * Resolves Shift: pushes enemies in front along facing; destroys on wall/other enemy;
+ * Resolves Shift: pushes enemies in front along player.aim; destroys on wall/other enemy;
  * landing on player ends the game (loss).
  * @returns {{ lost: boolean }}
  */
 export function resolveShift(player, enemies, onEnemyDestroyed) {
-  const dx = player.facing.dx;
-  const dz = player.facing.dz;
+  const dx = player.aim.x;
+  const dz = player.aim.z;
   const pushedList = collectEnemiesInFront(player.gx, player.gz, dx, dz, enemies);
   if (pushedList.length === 0) return { lost: false };
 
