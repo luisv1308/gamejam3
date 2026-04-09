@@ -42,6 +42,8 @@ let busy = false;
 /** Durante el delay de 0,1 s antes de resolver el shift. */
 let shiftDelayPending = false;
 let currentLevelIndex = 0;
+/** Solo en DEV: { sync(levelIndex) } */
+let devMenuApi = null;
 
 /** Cian base | rojo fuerte | amarillo combo | morado especial (victoria). */
 function pickShiftWaveColor(lineLen, destroyed, lost, won) {
@@ -91,6 +93,7 @@ function loadLevelFromIndex(idx) {
   }
   phase = Phase.PLAYER;
   busy = false;
+  devMenuApi?.sync?.(idx);
 }
 
 function restartCurrentLevel() {
@@ -645,4 +648,20 @@ function animate(now) {
 }
 
 setupScene();
+
+if (import.meta.env.DEV) {
+  import('./dev/devMenu.js').then(({ initDevMenu }) => {
+    devMenuApi = initDevMenu({
+      levelCount: LEVEL_COUNT,
+      getPhaseLabel: () => phase,
+      goToLevel: (idx) => {
+        currentLevelIndex = Math.max(0, Math.min(LEVEL_COUNT - 1, idx));
+        loadLevelFromIndex(currentLevelIndex);
+      },
+      restartLevel: restartCurrentLevel,
+    });
+    devMenuApi.sync(currentLevelIndex);
+  });
+}
+
 animate(performance.now());
