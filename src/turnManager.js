@@ -1,10 +1,12 @@
 import { isWalkable, collectEnemiesInFront } from './grid.js';
-import { EnemyType, planChaserMove } from './enemy.js';
+import { EnemyType, getChaserStepCandidatesToward } from './enemy.js';
 import { PUSH_TILES } from './constants.js';
 
 export const Phase = {
   PLAYER: 'player',
   ENEMY: 'enemy',
+  /** Nivel limpio: UI de victoria, juego pausado hasta confirmar. */
+  LEVEL_CLEAR: 'level_clear',
   GAME_OVER: 'game_over',
 };
 
@@ -15,16 +17,19 @@ function posKey(gx, gz) {
 /**
  * Resolves Shift: pushes enemies in front along player.aim; destroys on wall/other enemy;
  * landing on player ends the game (loss).
- * @returns {{ lost: boolean }}
+ * Los muertos no reciben pendingRemove aquí: se devuelve shiftDeaths para animar hasta el impacto.
+ * @returns {{ lost: boolean, shiftDeaths: { enemy, endGx, endGz }[] }}
  */
-export function resolveShift(player, enemies, onEnemyDestroyed) {
+export function resolveShift(player, enemies) {
   const dx = player.aim.x;
   const dz = player.aim.z;
   const pushedList = collectEnemiesInFront(player.gx, player.gz, dx, dz, enemies);
-  if (pushedList.length === 0) return { lost: false };
+  if (pushedList.length === 0) return { lost: false, shiftDeaths: [] };
 
   const targets = new Map();
   const toDestroy = new Set();
+  /** Casilla lógica donde “impacta” (muro, choque, etc.) para animación */
+  const deathEnds = new Map();
 
   for (const e of pushedList) {
     if (e.pendingRemove) continue;
@@ -32,10 +37,11 @@ export function resolveShift(player, enemies, onEnemyDestroyed) {
     const ngz = e.gz + dz * PUSH_TILES;
 
     if (ngx === player.gx && ngz === player.gz) {
-      return { lost: true };
+      return { lost: true, shiftDeaths: [] };
     }
     if (!isWalkable(ngx, ngz)) {
       toDestroy.add(e);
+      deathEnds.set(e, { gx: ngx, gz: ngz });
       continue;
     }
     targets.set(e, { gx: ngx, gz: ngz });
@@ -48,7 +54,12 @@ export function resolveShift(player, enemies, onEnemyDestroyed) {
     incoming.get(k).push(e);
   }
   for (const list of incoming.values()) {
-    if (list.length > 1) list.forEach((e) => toDestroy.add(e));
+    if (list.length <= 1) continue;
+    const t = targets.get(list[0]);
+    for (const e of list) {
+      toDestroy.add(e);
+      deathEnds.set(e, { gx: t.gx, gz: t.gz });
+    }
   }
 
   const pushedSet = new Set(pushedList);
@@ -59,6 +70,7 @@ export function resolveShift(player, enemies, onEnemyDestroyed) {
       if (pushedSet.has(other)) continue;
       if (other.gx === t.gx && other.gz === t.gz) {
         toDestroy.add(e);
+        deathEnds.set(e, { gx: t.gx, gz: t.gz });
         break;
       }
     }
@@ -72,59 +84,55 @@ export function resolveShift(player, enemies, onEnemyDestroyed) {
     e.gz = t.gz;
   }
 
+  const shiftDeaths = [];
   for (const e of toDestroy) {
-    e.pendingRemove = true;
-    e.destroyAnim = 1;
-    onEnemyDestroyed?.(e);
+    const end = deathEnds.get(e);
+    if (end) shiftDeaths.push({ enemy: e, endGx: end.gx, endGz: end.gz });
   }
 
-  return { lost: false };
-}
-
-function enemyAt(gx, gz, enemies, exclude) {
-  for (const e of enemies) {
-    if (e.pendingRemove) continue;
-    if (exclude && e === exclude) continue;
-    if (e.gx === gx && e.gz === gz) return e;
-  }
-  return null;
+  return { lost: false, shiftDeaths };
 }
 
 /**
- * Plans enemy moves (no animation). Returns { lost: boolean, moves: Array<{ enemy, gx, gz }> }
+ * Planifica movimientos de chasers en orden de array: siempre intentan acercarse;
+ * primero el eje con mayor distancia, si no puede (muro u ocupado) el otro eje.
+ * Resolución secuencial evita que dos enemigos anulen el turno al mismo destino.
  */
 export function planEnemyTurn(player, enemies) {
-  const planned = [];
+  const occupied = new Set();
+  for (const e of enemies) {
+    if (e.pendingRemove) continue;
+    occupied.add(posKey(e.gx, e.gz));
+  }
+
+  const moves = [];
+
   for (const e of enemies) {
     if (e.pendingRemove) continue;
     if (e.type !== EnemyType.CHASER) continue;
 
-    const step = planChaserMove(e, player.gx, player.gz);
-    if (!step) continue;
-    const { gx: ngx, gz: ngz } = step;
+    const fromKey = posKey(e.gx, e.gz);
+    occupied.delete(fromKey);
 
-    if (!isWalkable(ngx, ngz)) continue;
+    const candidates = getChaserStepCandidatesToward(e, player.gx, player.gz);
+    let chosen = null;
 
-    if (ngx === player.gx && ngz === player.gz) {
-      return { lost: true, moves: [] };
+    for (const c of candidates) {
+      if (!isWalkable(c.gx, c.gz)) continue;
+      if (c.gx === player.gx && c.gz === player.gz) {
+        return { lost: true, moves: [] };
+      }
+      if (occupied.has(posKey(c.gx, c.gz))) continue;
+      chosen = c;
+      break;
     }
 
-    if (enemyAt(ngx, ngz, enemies, e)) continue;
-
-    planned.push({ enemy: e, gx: ngx, gz: ngz });
-  }
-
-  const byTarget = new Map();
-  for (const p of planned) {
-    const k = posKey(p.gx, p.gz);
-    if (!byTarget.has(k)) byTarget.set(k, []);
-    byTarget.get(k).push(p);
-  }
-
-  const moves = [];
-  for (const p of planned) {
-    if (byTarget.get(posKey(p.gx, p.gz)).length > 1) continue;
-    moves.push({ enemy: p.enemy, gx: p.gx, gz: p.gz });
+    if (chosen) {
+      occupied.add(posKey(chosen.gx, chosen.gz));
+      moves.push({ enemy: e, gx: chosen.gx, gz: chosen.gz });
+    } else {
+      occupied.add(fromKey);
+    }
   }
 
   return { lost: false, moves };

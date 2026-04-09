@@ -48,20 +48,23 @@ export function makeEnemy(type, gx, gz, scene) {
 }
 
 /**
- * Chaser: one step along axis that reduces Manhattan distance to (tx, tz).
- * Static: does not move.
+ * Pasos posibles hacia el jugador (hasta 2): eje con mayor |Δ| primero, luego el otro.
+ * No evalúa “seguridad”; solo orden de intento. Static → [].
  */
-export function planChaserMove(enemy, tx, tz) {
-  if (enemy.type !== EnemyType.CHASER) return null;
-  const dx = tx - enemy.gx;
-  const dz = tz - enemy.gz;
-  if (dx === 0 && dz === 0) return null;
-  let ngx = enemy.gx;
-  let ngz = enemy.gz;
-  if (Math.abs(dx) >= Math.abs(dz)) {
-    ngx += dx > 0 ? 1 : -1;
-  } else {
-    ngz += dz > 0 ? 1 : -1;
-  }
-  return { gx: ngx, gz: ngz };
+export function getChaserStepCandidatesToward(enemy, targetGx, targetGz) {
+  if (enemy.type !== EnemyType.CHASER) return [];
+
+  const pdx = targetGx - enemy.gx;
+  const pdz = targetGz - enemy.gz;
+  if (pdx === 0 && pdz === 0) return [];
+
+  const sx = Math.sign(pdx);
+  const sz = Math.sign(pdz);
+
+  const horizontal = sx !== 0 ? { gx: enemy.gx + sx, gz: enemy.gz } : null;
+  const vertical = sz !== 0 ? { gx: enemy.gx, gz: enemy.gz + sz } : null;
+
+  const primaryFirst = Math.abs(pdx) >= Math.abs(pdz);
+  const ordered = primaryFirst ? [horizontal, vertical] : [vertical, horizontal];
+  return ordered.filter((c) => c !== null);
 }

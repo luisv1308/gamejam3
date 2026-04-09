@@ -8,9 +8,66 @@
       * { margin: 0; box-sizing: border-box; }
       html, body { overflow: hidden; height: 100%; background: #1a1d24; }
       canvas { display: block; }
+      #level-clear-overlay {
+        position: fixed;
+        inset: 0;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        z-index: 10;
+        background: rgba(15, 17, 22, 0.72);
+        backdrop-filter: blur(6px);
+        font-family: system-ui, "Segoe UI", Roboto, sans-serif;
+        color: #e8eaef;
+        pointer-events: auto;
+        cursor: pointer;
+      }
+      #level-clear-overlay.visible { display: flex; }
+      #level-clear-overlay .panel {
+        text-align: center;
+        max-width: 22rem;
+        padding: 1.75rem 1.5rem;
+        border-radius: 12px;
+        background: linear-gradient(165deg, #2a3140 0%, #1f242e 100%);
+        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+        border: 1px solid rgba(170, 68, 255, 0.25);
+      }
+      #level-clear-overlay h2 {
+        font-size: 1.35rem;
+        font-weight: 600;
+        margin-bottom: 0.5rem;
+        color: #c9a8ff;
+      }
+      #level-clear-overlay p {
+        font-size: 0.95rem;
+        line-height: 1.45;
+        opacity: 0.88;
+        margin-bottom: 1rem;
+      }
+      #level-clear-overlay .hint {
+        font-size: 0.82rem;
+        opacity: 0.65;
+        letter-spacing: 0.02em;
+      }
+      #level-clear-overlay kbd {
+        display: inline-block;
+        padding: 0.12rem 0.45rem;
+        border-radius: 4px;
+        background: #141820;
+        border: 1px solid #3d4452;
+        font-size: 0.78rem;
+        font-family: inherit;
+      }
     </style>
   </head>
   <body>
+    <div id="level-clear-overlay" aria-live="polite" aria-hidden="true">
+      <div class="panel">
+        <h2 id="level-clear-title">Nivel completado</h2>
+        <p id="level-clear-msg"></p>
+        <p class="hint">Pulsa <kbd>Enter</kbd>, <kbd>Espacio</kbd> o haz clic para continuar</p>
+      </div>
+    </div>
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>

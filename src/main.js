@@ -45,6 +45,31 @@ let currentLevelIndex = 0;
 /** Solo en DEV: { sync(levelIndex) } */
 let devMenuApi = null;
 
+function hideLevelClearOverlay() {
+  const el = document.getElementById('level-clear-overlay');
+  if (!el) return;
+  el.classList.remove('visible');
+  el.setAttribute('aria-hidden', 'true');
+}
+
+function showLevelClearOverlay(title, message) {
+  const el = document.getElementById('level-clear-overlay');
+  if (!el) return;
+  const h = el.querySelector('#level-clear-title');
+  const p = el.querySelector('#level-clear-msg');
+  if (h) h.textContent = title;
+  if (p) p.textContent = message;
+  el.classList.add('visible');
+  el.setAttribute('aria-hidden', 'false');
+}
+
+function continueToNextLevel() {
+  if (phase !== Phase.LEVEL_CLEAR) return;
+  hideLevelClearOverlay();
+  currentLevelIndex++;
+  loadLevelFromIndex(currentLevelIndex);
+}
+
 /** Cian base | rojo fuerte | amarillo combo | morado especial (victoria). */
 function pickShiftWaveColor(lineLen, destroyed, lost, won) {
   if (lost) return 0xff4444;
@@ -69,20 +94,30 @@ function enemyAt(gx, gz) {
 }
 
 function maybeWin() {
-  if (countLivingEnemies(enemies) === 0) {
-    console.log(`[progreso] Nivel ${currentLevelIndex + 1} completado`);
-    if (currentLevelIndex >= LEVEL_COUNT - 1) {
-      console.log('[progreso] ¡Todos los niveles completados!');
-      phase = Phase.GAME_OVER;
-      busy = false;
-      return;
-    }
-    currentLevelIndex++;
-    loadLevelFromIndex(currentLevelIndex);
+  if (phase === Phase.LEVEL_CLEAR || phase === Phase.GAME_OVER) return;
+  if (countLivingEnemies(enemies) !== 0) return;
+  if (enemies.length > 0) return;
+
+  if (currentLevelIndex >= LEVEL_COUNT - 1) {
+    console.log('[progreso] ¡Todos los niveles completados!');
+    phase = Phase.GAME_OVER;
+    busy = false;
+    hideLevelClearOverlay();
+    return;
   }
+
+  console.log(`[progreso] Nivel ${currentLevelIndex + 1} completado`);
+  phase = Phase.LEVEL_CLEAR;
+  busy = true;
+  const n = currentLevelIndex + 1;
+  showLevelClearOverlay(
+    `Nivel ${n} completado`,
+    `Siguiente: nivel ${n + 1} de ${LEVEL_COUNT}.`
+  );
 }
 
 function loadLevelFromIndex(idx) {
+  hideLevelClearOverlay();
   const ok = loadLevel(idx, {
     onBeforeLoad: clearLevelEntities,
     applyLayout: applyLevelLayout,
@@ -97,6 +132,7 @@ function loadLevelFromIndex(idx) {
 }
 
 function restartCurrentLevel() {
+  hideLevelClearOverlay();
   console.log(`[progreso] Reinicio del nivel ${currentLevelIndex + 1}`);
   loadLevelFromIndex(currentLevelIndex);
 }
@@ -175,15 +211,13 @@ function beginEnemyPhase() {
 }
 
 function finishEnemyPhase() {
-  maybeWin();
-  if (phase === Phase.GAME_OVER) return;
+  if (phase === Phase.GAME_OVER || phase === Phase.LEVEL_CLEAR) return;
   phase = Phase.PLAYER;
   busy = false;
 }
 
 function onPlayerMoveComplete() {
-  maybeWin();
-  if (phase === Phase.GAME_OVER) return;
+  if (phase === Phase.GAME_OVER || phase === Phase.LEVEL_CLEAR) return;
   beginEnemyPhase();
 }
 
@@ -323,10 +357,13 @@ function startShift() {
     }
 
     const snap = enemies.map((e) => ({ e, gx: e.gx, gz: e.gz }));
-    const r = resolveShift(player, enemies, () => {});
+    const r = resolveShift(player, enemies);
 
-    const destroyed = snap.filter(({ e }) => e.pendingRemove).length;
-    const won = countLivingEnemies(enemies) === 0;
+    const shiftDeaths = r.shiftDeaths ?? [];
+    const destroyed = shiftDeaths.length;
+    const doomed = new Set(shiftDeaths.map((d) => d.enemy));
+    const won =
+      enemies.filter((e) => !e.pendingRemove && !doomed.has(e)).length === 0;
     const waveColor = pickShiftWaveColor(line2.length, destroyed, r.lost, won);
 
     const pw = gridToWorld(player.gx, player.gz);
@@ -339,8 +376,19 @@ function startShift() {
     }
 
     let anyAnim = false;
+    for (const { enemy, endGx, endGz } of shiftDeaths) {
+      const row = snap.find((s) => s.e === enemy);
+      if (!row) continue;
+      const from = gridToWorld(row.gx, row.gz);
+      const to = gridToWorld(endGx, endGz);
+      enemy.animFrom = { x: from.x, y: from.y, z: from.z };
+      enemy.animTo = { x: to.x, y: to.y, z: to.z };
+      enemy.animT = 0;
+      enemy.shiftDeathAfterTravel = true;
+      anyAnim = true;
+    }
     for (const { e, gx, gz } of snap) {
-      if (e.pendingRemove) continue;
+      if (e.pendingRemove || e.shiftDeathAfterTravel) continue;
       if (e.gx !== gx || e.gz !== gz) {
         const from = gridToWorld(gx, gz);
         const to = gridToWorld(e.gx, e.gz);
@@ -352,9 +400,11 @@ function startShift() {
     }
 
     if (!anyAnim) {
-      maybeWin();
-      if (phase === Phase.GAME_OVER) return;
-      beginEnemyPhase();
+      if (enemies.some((e) => !e.pendingRemove)) {
+        beginEnemyPhase();
+      } else {
+        busy = enemies.length > 0;
+      }
     }
   }, 100);
 }
@@ -402,6 +452,11 @@ function updateMovementAnimations(dt, speed) {
       if (t >= 1) {
         e.mesh.position.set(e.animTo.x, e.animTo.y, e.animTo.z);
         e.mesh.scale.set(1, 1, 1);
+        if (e.shiftDeathAfterTravel) {
+          e.shiftDeathAfterTravel = false;
+          e.pendingRemove = true;
+          e.destroyAnim = 1;
+        }
         e.animFrom = null;
         e.animTo = null;
       }
@@ -461,12 +516,27 @@ function tickAnimations(dt) {
     !shiftEnemyMove &&
     !shiftDelayPending
   ) {
+    if (enemies.some((e) => !e.pendingRemove)) {
+      beginEnemyPhase();
+    } else {
+      busy = enemies.length > 0;
+    }
+  }
+
+  if (phase !== Phase.GAME_OVER && phase !== Phase.LEVEL_CLEAR) {
     maybeWin();
-    if (phase !== Phase.GAME_OVER) beginEnemyPhase();
   }
 }
 
 function onKeyDown(ev) {
+  if (phase === Phase.LEVEL_CLEAR) {
+    if (ev.code === 'Enter' || ev.code === 'Space') {
+      ev.preventDefault();
+      continueToNextLevel();
+    }
+    return;
+  }
+
   if (phase === Phase.GAME_OVER) return;
 
   if (ev.code === 'Space') {
@@ -623,6 +693,10 @@ function setupScene() {
 
   window.addEventListener('keydown', onKeyDown);
   window.addEventListener('resize', onResize);
+
+  document.getElementById('level-clear-overlay')?.addEventListener('click', () => {
+    if (phase === Phase.LEVEL_CLEAR) continueToNextLevel();
+  });
 }
 
 function onResize() {
@@ -641,8 +715,10 @@ function animate(now) {
   requestAnimationFrame(animate);
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
-  tickAnimations(dt);
-  shockwave?.update(dt);
+  if (phase !== Phase.LEVEL_CLEAR) {
+    tickAnimations(dt);
+    shockwave?.update(dt);
+  }
   updateAimVisuals();
   renderer.render(scene, camera);
 }

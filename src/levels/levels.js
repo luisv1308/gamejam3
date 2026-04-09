@@ -33,13 +33,13 @@ export const LEVELS = [
     '........',
     '........',
   ],
-  // Nivel 3 — E arriba, dos filas de parejas, P centrado
+  // Nivel 3 — E arriba, flancos y E abajo-derecha
   [
     '........',
     '...E....',
-    '..E..E..',
-    '....P...',
-    '..E..E..',
+    '........',
+    '..E.P...',
+    '......E.',
     '........',
     '........',
     '........',
