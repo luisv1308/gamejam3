@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 
 /**
- * Onda en línea sobre el suelo: se estira y avanza en la dirección del shift.
+ * Anillo expansivo en el suelo: espectáculo circular; el empuje sigue siendo lineal en la lógica.
  */
 export class Shockwave {
   constructor(scene) {
@@ -9,18 +9,14 @@ export class Shockwave {
     this.mesh = null;
     this.active = false;
     this.time = 0;
-    this.dirX = 0;
-    this.dirZ = 0;
   }
 
   /**
-   * @param {number} x - mundo X (ej. desde gridToWorld)
+   * @param {number} x - mundo X
    * @param {number} z - mundo Z
-   * @param {number} dirX - dirección grid / mundo en X
-   * @param {number} dirZ - dirección grid / mundo en Z
-   * @param {number} [color=0x00ffff] - cian base; rojo/amarillo/morado según acción
+   * @param {number} [color=0x00ffff] - tinte según contexto (misma paleta que antes)
    */
-  trigger(x, z, dirX, dirZ, color = 0x00ffff) {
+  trigger(x, z, color = 0x00ffff) {
     if (this.mesh) {
       this.scene.remove(this.mesh);
       this.mesh.geometry.dispose();
@@ -28,31 +24,25 @@ export class Shockwave {
       this.mesh = null;
     }
 
-    const geometry = new THREE.PlaneGeometry(1, 1);
+    const geometry = new THREE.RingGeometry(0.2, 0.4, 32);
 
     const material = new THREE.MeshBasicMaterial({
       color,
       transparent: true,
-      opacity: 0.55,
+      opacity: 0.6,
       side: THREE.DoubleSide,
       depthWrite: false,
     });
 
     this.mesh = new THREE.Mesh(geometry, material);
     this.mesh.rotation.x = -Math.PI / 2;
-    this.mesh.rotation.y = Math.atan2(dirX, dirZ);
-
-    this.mesh.position.set(x, 0.06, z);
-
+    this.mesh.position.set(x, 0.05, z);
     this.mesh.scale.set(0.5, 0.5, 0.5);
 
     this.scene.add(this.mesh);
 
     this.active = true;
     this.time = 0;
-
-    this.dirX = dirX;
-    this.dirZ = dirZ;
   }
 
   update(delta) {
@@ -60,17 +50,13 @@ export class Shockwave {
 
     this.time += delta;
 
-    const speed = 8;
-    const length = Math.max(0.4, this.time * speed);
+    const speed = 6;
+    const scale = 0.5 + this.time * speed;
+    this.mesh.scale.set(scale, scale * 0.6, scale);
 
-    this.mesh.scale.set(1.4, length, 1);
+    this.mesh.material.opacity = Math.max(0, 0.6 - this.time * 1.5);
 
-    this.mesh.position.x += this.dirX * delta * speed * 0.5;
-    this.mesh.position.z += this.dirZ * delta * speed * 0.5;
-
-    this.mesh.material.opacity = Math.max(0, 0.65 - this.time * 1.6);
-
-    if (this.time > 0.45) {
+    if (this.time > 0.5) {
       this.scene.remove(this.mesh);
       this.mesh.geometry.dispose();
       this.mesh.material.dispose();

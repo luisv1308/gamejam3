@@ -38,9 +38,9 @@ function pickShiftWaveColor(lineLen, destroyed, lost, won) {
 }
 
 function applyShiftCameraShake() {
-  camera.position.x = cameraRest.x + (Math.random() - 0.5) * 0.1;
+  camera.position.x = cameraRest.x + (Math.random() - 0.5) * 0.15;
   camera.position.y = cameraRest.y;
-  camera.position.z = cameraRest.z + (Math.random() - 0.5) * 0.1;
+  camera.position.z = cameraRest.z + (Math.random() - 0.5) * 0.15;
 }
 
 function enemyAt(gx, gz) {
@@ -223,7 +223,7 @@ function startShift() {
   const waveColor = pickShiftWaveColor(line.length, destroyed, r.lost, won);
 
   const pw = gridToWorld(player.gx, player.gz);
-  shockwave.trigger(pw.x, pw.z, dx, dz, waveColor);
+  shockwave.trigger(pw.x, pw.z, waveColor);
   applyShiftCameraShake();
 
   if (r.lost) {
