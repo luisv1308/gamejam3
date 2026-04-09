@@ -5,6 +5,23 @@ import { GRID_SIZE, TILE_SIZE, SHIFT_MAX_RANGE } from './constants.js';
  * World Y is 0 for floor; entities sit slightly above tiles.
  */
 
+/** @type {Uint8Array | null} — 1 = muro (no transitable). */
+let wallMask = null;
+
+export function clearWallMask() {
+  wallMask = null;
+}
+
+/** @param {Uint8Array | null} mask length GRID_SIZE*GRID_SIZE */
+export function setWallMask(mask) {
+  wallMask = mask;
+}
+
+export function isWall(gx, gz) {
+  if (!isInsideGrid(gx, gz)) return false;
+  return wallMask !== null && wallMask[gz * GRID_SIZE + gx] === 1;
+}
+
 export function gridToWorld(gx, gz) {
   const x = (gx - GRID_SIZE / 2 + 0.5) * TILE_SIZE;
   const z = (gz - GRID_SIZE / 2 + 0.5) * TILE_SIZE;
@@ -15,39 +32,34 @@ export function isInsideGrid(gx, gz) {
   return gx >= 0 && gx < GRID_SIZE && gz >= 0 && gz < GRID_SIZE;
 }
 
-/** Border-only walkability (no inner walls in this prototype). */
 export function isWalkable(gx, gz) {
-  return isInsideGrid(gx, gz);
+  if (!isInsideGrid(gx, gz)) return false;
+  if (wallMask !== null && wallMask[gz * GRID_SIZE + gx] === 1) return false;
+  return true;
 }
 
 /**
- * Returns enemies strictly in front of (px, pz) along (dx, dz).
- * dx, dz must be one of: (±1,0) or (0,±1).
- * @param {number} [maxRange=SHIFT_MAX_RANGE] - distancia en casillas desde el jugador (Manhattan en la línea).
+ * Enemigos en línea de visión: avanza casilla a casilla y se detiene en muro o borde.
+ * dx, dz ∈ { (±1,0), (0,±1) }.
  */
 export function collectEnemiesInFront(px, pz, dx, dz, enemies, maxRange = SHIFT_MAX_RANGE) {
   const inFront = [];
-  for (const e of enemies) {
-    if (e.pendingRemove) continue;
-    const ex = e.gx;
-    const ez = e.gz;
-    let onLine = false;
-    if (dx !== 0) {
-      if (ez !== pz) continue;
-      if (dx > 0 && ex > px) onLine = true;
-      else if (dx < 0 && ex < px) onLine = true;
-    } else {
-      if (ex !== px) continue;
-      if (dz > 0 && ez > pz) onLine = true;
-      else if (dz < 0 && ez < pz) onLine = true;
+  let cx = px + dx;
+  let cz = pz + dz;
+  for (let dist = 1; dist <= maxRange; dist++) {
+    if (!isInsideGrid(cx, cz)) break;
+    if (isWall(cx, cz)) break;
+    for (const e of enemies) {
+      if (e.pendingRemove) continue;
+      if (e.gx === cx && e.gz === cz) {
+        inFront.push(e);
+        break;
+      }
     }
-    if (!onLine) continue;
-    const dist = Math.abs(ex - px) + Math.abs(ez - pz);
-    if (dist > maxRange) continue;
-    inFront.push(e);
+    cx += dx;
+    cz += dz;
   }
-  // Farther from player first (process pushes from the far end of the line)
-  const dist = (e) => Math.abs(e.gx - px) + Math.abs(e.gz - pz);
-  inFront.sort((a, b) => dist(b) - dist(a));
+  const distFn = (e) => Math.abs(e.gx - px) + Math.abs(e.gz - pz);
+  inFront.sort((a, b) => distFn(b) - distFn(a));
   return inFront;
 }

@@ -27,6 +27,8 @@ export function createEnemyMesh(type) {
  * One enemy instance: grid position + Three mesh + type.
  */
 export function makeEnemy(type, gx, gz, scene) {
+  let baseColor = 0xc94c4c;
+  if (type === EnemyType.STATIC) baseColor = 0xd9822b;
   const mesh = createEnemyMesh(type);
   const pos = gridToWorld(gx, gz);
   mesh.position.set(pos.x, pos.y, pos.z);
@@ -36,6 +38,7 @@ export function makeEnemy(type, gx, gz, scene) {
     gx,
     gz,
     mesh,
+    baseColor,
     pendingRemove: false,
     animFrom: null,
     animTo: null,

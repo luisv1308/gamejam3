@@ -1,7 +1,16 @@
 import * as THREE from 'three';
 import { GRID_SIZE, TILE_SIZE, PLAYER_SPEED, ENEMY_SPEED, SHIFT_MAX_RANGE } from './constants.js';
-import { gridToWorld, isWalkable, collectEnemiesInFront, isInsideGrid } from './grid.js';
-import { createPlayer, setFacingFromMove, setPlayerAim } from './player.js';
+import {
+  gridToWorld,
+  isWalkable,
+  collectEnemiesInFront,
+  isInsideGrid,
+  clearWallMask,
+  setWallMask,
+  isWall,
+} from './grid.js';
+import { createPlayer, setFacingFromMove, setPlayerAim, disposePlayer } from './player.js';
+import { loadLevel, buildWallMaskFromPositions, LEVEL_COUNT } from './systems/levelLoader.js';
 import { makeEnemy, EnemyType } from './enemy.js';
 import {
   resolveShift,
@@ -23,10 +32,16 @@ let shiftPreviewLine;
 /** Planos sobre el suelo: una por casilla de alcance del shift. */
 let rangeTileMeshes = [];
 let rangeHighlightGeom = null;
+let wallSharedGeom = null;
+let wallSharedMat = null;
+let wallMeshes = [];
 let player;
 let enemies = [];
 let phase = Phase.PLAYER;
 let busy = false;
+/** Durante el delay de 0,1 s antes de resolver el shift. */
+let shiftDelayPending = false;
+let currentLevelIndex = 0;
 
 /** Cian base | rojo fuerte | amarillo combo | morado especial (victoria). */
 function pickShiftWaveColor(lineLen, destroyed, lost, won) {
@@ -51,26 +66,92 @@ function enemyAt(gx, gz) {
   return null;
 }
 
-function logOutcome(won) {
-  if (won) console.log('You win — all threats cleared.');
-  else console.log('Game over — an enemy reached you.');
-}
-
-function setGameOver(won) {
-  phase = Phase.GAME_OVER;
-  busy = false;
-  logOutcome(won);
-}
-
 function maybeWin() {
-  if (countLivingEnemies(enemies) === 0) setGameOver(true);
+  if (countLivingEnemies(enemies) === 0) {
+    console.log(`[progreso] Nivel ${currentLevelIndex + 1} completado`);
+    if (currentLevelIndex >= LEVEL_COUNT - 1) {
+      console.log('[progreso] ¡Todos los niveles completados!');
+      phase = Phase.GAME_OVER;
+      busy = false;
+      return;
+    }
+    currentLevelIndex++;
+    loadLevelFromIndex(currentLevelIndex);
+  }
+}
+
+function loadLevelFromIndex(idx) {
+  const ok = loadLevel(idx, {
+    onBeforeLoad: clearLevelEntities,
+    applyLayout: applyLevelLayout,
+  });
+  if (!ok) {
+    console.error('[level] No se pudo cargar el nivel', idx);
+    return;
+  }
+  phase = Phase.PLAYER;
+  busy = false;
+}
+
+function restartCurrentLevel() {
+  console.log(`[progreso] Reinicio del nivel ${currentLevelIndex + 1}`);
+  loadLevelFromIndex(currentLevelIndex);
+}
+
+function clearWallMeshes() {
+  for (const m of wallMeshes) {
+    scene.remove(m);
+  }
+  wallMeshes.length = 0;
+}
+
+function clearAllEnemies() {
+  for (const e of enemies) {
+    if (e.mesh) {
+      scene.remove(e.mesh);
+      e.mesh.geometry.dispose();
+      e.mesh.material.dispose();
+    }
+  }
+  enemies.length = 0;
+}
+
+function clearLevelEntities() {
+  clearWallMeshes();
+  clearAllEnemies();
+  clearWallMask();
+  if (player) {
+    disposePlayer(player, scene);
+    player = null;
+  }
+}
+
+function applyLevelLayout(layout) {
+  clearWallMask();
+  if (layout.wallPositions.length > 0) {
+    setWallMask(buildWallMaskFromPositions(layout.wallPositions));
+    for (const { gx, gz } of layout.wallPositions) {
+      const mesh = new THREE.Mesh(wallSharedGeom, wallSharedMat);
+      const p = gridToWorld(gx, gz);
+      mesh.position.set(p.x, 0.42, p.z);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      scene.add(mesh);
+      wallMeshes.push(mesh);
+    }
+  }
+  for (const spec of layout.enemies) {
+    const t = spec.type === 'chaser' ? EnemyType.CHASER : EnemyType.STATIC;
+    enemies.push(makeEnemy(t, spec.gx, spec.gz, scene));
+  }
+  player = createPlayer(scene, layout.playerGx, layout.playerGz);
 }
 
 function beginEnemyPhase() {
   phase = Phase.ENEMY;
   const { lost, moves } = planEnemyTurn(player, enemies);
   if (lost) {
-    setGameOver(false);
+    restartCurrentLevel();
     return;
   }
   if (moves.length === 0) {
@@ -130,13 +211,14 @@ function clearShiftPreview() {
   hideRangeTileHighlights();
   for (const e of enemies) {
     if (e.pendingRemove) continue;
+    e.mesh.material.color.setHex(e.baseColor);
     e.mesh.material.emissive.setHex(0x000000);
     e.mesh.material.emissiveIntensity = 0;
   }
 }
 
 function updateAimVisuals() {
-  if (!aimIndicator || !shiftPreviewLine) return;
+  if (!player || !aimIndicator || !shiftPreviewLine) return;
 
   if (phase !== Phase.PLAYER || busy) {
     aimIndicator.visible = false;
@@ -148,19 +230,21 @@ function updateAimVisuals() {
   const ax = player.aim.x;
   const az = player.aim.z;
 
+  let cx = player.gx + ax;
+  let cz = player.gz + az;
   for (let i = 0; i < SHIFT_MAX_RANGE; i++) {
     const mesh = rangeTileMeshes[i];
     if (!mesh) continue;
-    const gx = player.gx + ax * (i + 1);
-    const gz = player.gz + az * (i + 1);
-    if (!isInsideGrid(gx, gz)) {
-      mesh.visible = false;
-      continue;
+    if (!isInsideGrid(cx, cz) || isWall(cx, cz)) {
+      for (let k = i; k < SHIFT_MAX_RANGE; k++) {
+        if (rangeTileMeshes[k]) rangeTileMeshes[k].visible = false;
+      }
+      break;
     }
-    const w = gridToWorld(gx, gz);
+    const w = gridToWorld(cx, cz);
     mesh.position.set(w.x, 0.028, w.z);
     mesh.visible = true;
-    const target = enemyAt(gx, gz);
+    const target = enemyAt(cx, cz);
     if (target) {
       mesh.material.color.setHex(0xffaa44);
       mesh.material.opacity = 0.52;
@@ -168,6 +252,8 @@ function updateAimVisuals() {
       mesh.material.color.setHex(0x3d9eff);
       mesh.material.opacity = 0.36;
     }
+    cx += ax;
+    cz += az;
   }
 
   aimIndicator.visible = true;
@@ -181,7 +267,9 @@ function updateAimVisuals() {
   let gx = player.gx + ax;
   let gz = player.gz + az;
   let steps = 0;
-  while (isInsideGrid(gx, gz) && steps < SHIFT_MAX_RANGE) {
+  while (steps < SHIFT_MAX_RANGE) {
+    if (!isInsideGrid(gx, gz)) break;
+    if (isWall(gx, gz)) break;
     const w = gridToWorld(gx, gz);
     pts.push(new THREE.Vector3(w.x, 0.04, w.z));
     gx += ax;
@@ -198,9 +286,11 @@ function updateAimVisuals() {
   for (const e of enemies) {
     if (e.pendingRemove) continue;
     if (inLine.has(e)) {
-      e.mesh.material.emissive.setHex(0x88ffcc);
+      e.mesh.material.color.setHex(0xffee99);
+      e.mesh.material.emissive.setHex(0x44ff99);
       e.mesh.material.emissiveIntensity = 0.72;
     } else {
+      e.mesh.material.color.setHex(e.baseColor);
       e.mesh.material.emissive.setHex(0x000000);
       e.mesh.material.emissiveIntensity = 0;
     }
@@ -213,42 +303,57 @@ function startShift() {
   const line = collectEnemiesInFront(player.gx, player.gz, dx, dz, enemies);
   if (line.length === 0) return;
 
+  shiftDelayPending = true;
   busy = true;
-  const snap = enemies.map((e) => ({ e, gx: e.gx, gz: e.gz }));
 
-  const r = resolveShift(player, enemies, () => {});
-
-  const destroyed = snap.filter(({ e }) => e.pendingRemove).length;
-  const won = countLivingEnemies(enemies) === 0;
-  const waveColor = pickShiftWaveColor(line.length, destroyed, r.lost, won);
-
-  const pw = gridToWorld(player.gx, player.gz);
-  shockwave.trigger(pw.x, pw.z, waveColor);
-  applyShiftCameraShake();
-
-  if (r.lost) {
-    setGameOver(false);
-    return;
-  }
-
-  let anyAnim = false;
-  for (const { e, gx, gz } of snap) {
-    if (e.pendingRemove) continue;
-    if (e.gx !== gx || e.gz !== gz) {
-      const from = gridToWorld(gx, gz);
-      const to = gridToWorld(e.gx, e.gz);
-      e.animFrom = { x: from.x, y: from.y, z: from.z };
-      e.animTo = { x: to.x, y: to.y, z: to.z };
-      e.animT = 0;
-      anyAnim = true;
+  setTimeout(() => {
+    shiftDelayPending = false;
+    if (phase !== Phase.PLAYER || phase === Phase.GAME_OVER) {
+      busy = false;
+      return;
     }
-  }
 
-  if (!anyAnim) {
-    maybeWin();
-    if (phase === Phase.GAME_OVER) return;
-    beginEnemyPhase();
-  }
+    const line2 = collectEnemiesInFront(player.gx, player.gz, dx, dz, enemies);
+    if (line2.length === 0) {
+      busy = false;
+      return;
+    }
+
+    const snap = enemies.map((e) => ({ e, gx: e.gx, gz: e.gz }));
+    const r = resolveShift(player, enemies, () => {});
+
+    const destroyed = snap.filter(({ e }) => e.pendingRemove).length;
+    const won = countLivingEnemies(enemies) === 0;
+    const waveColor = pickShiftWaveColor(line2.length, destroyed, r.lost, won);
+
+    const pw = gridToWorld(player.gx, player.gz);
+    shockwave.trigger(pw.x, pw.z, waveColor);
+    applyShiftCameraShake();
+
+    if (r.lost) {
+      restartCurrentLevel();
+      return;
+    }
+
+    let anyAnim = false;
+    for (const { e, gx, gz } of snap) {
+      if (e.pendingRemove) continue;
+      if (e.gx !== gx || e.gz !== gz) {
+        const from = gridToWorld(gx, gz);
+        const to = gridToWorld(e.gx, e.gz);
+        e.animFrom = { x: from.x, y: from.y, z: from.z };
+        e.animTo = { x: to.x, y: to.y, z: to.z };
+        e.animT = 0;
+        anyAnim = true;
+      }
+    }
+
+    if (!anyAnim) {
+      maybeWin();
+      if (phase === Phase.GAME_OVER) return;
+      beginEnemyPhase();
+    }
+  }, 100);
 }
 
 function updateMovementAnimations(dt, speed) {
@@ -327,7 +432,7 @@ function updateDestroyAnimations(dt) {
 }
 
 function tickAnimations(dt) {
-  const playerMoving = Boolean(player.animFrom && player.animTo);
+  const playerMoving = Boolean(player?.animFrom && player?.animTo);
   const enemyMoving = enemies.some((e) => !e.pendingRemove && e.animFrom && e.animTo);
 
   if (playerMoving || enemyMoving) {
@@ -345,7 +450,14 @@ function tickAnimations(dt) {
   }
 
   const shiftEnemyMove = enemies.some((e) => !e.pendingRemove && e.animFrom && e.animTo);
-  if (busy && phase === Phase.PLAYER && !player.animFrom && !shiftEnemyMove) {
+  if (
+    busy &&
+    phase === Phase.PLAYER &&
+    player &&
+    !player.animFrom &&
+    !shiftEnemyMove &&
+    !shiftDelayPending
+  ) {
     maybeWin();
     if (phase !== Phase.GAME_OVER) beginEnemyPhase();
   }
@@ -459,9 +571,12 @@ function setupScene() {
 
   buildGrid();
 
-  const startGx = 1;
-  const startGz = 1;
-  player = createPlayer(scene, startGx, startGz);
+  wallSharedGeom = new THREE.BoxGeometry(0.92, 0.85, 0.92);
+  wallSharedMat = new THREE.MeshStandardMaterial({
+    color: 0x3d4452,
+    roughness: 0.92,
+    metalness: 0.05,
+  });
 
   const aimGeom = new THREE.BoxGeometry(0.18, 0.06, 0.9);
   const aimMat = new THREE.MeshBasicMaterial({ color: 0xffff00 });
@@ -500,9 +615,8 @@ function setupScene() {
     rangeTileMeshes.push(m);
   }
 
-  enemies.push(makeEnemy(EnemyType.CHASER, 5, 1, scene));
-  enemies.push(makeEnemy(EnemyType.CHASER, 6, 6, scene));
-  enemies.push(makeEnemy(EnemyType.STATIC, 4, 4, scene));
+  currentLevelIndex = 0;
+  loadLevelFromIndex(0);
 
   window.addEventListener('keydown', onKeyDown);
   window.addEventListener('resize', onResize);

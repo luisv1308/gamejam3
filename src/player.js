@@ -41,3 +41,10 @@ export function setFacingFromMove(player, dx, dz) {
     player.facing = { dx, dz };
   }
 }
+
+export function disposePlayer(player, scene) {
+  if (!player?.mesh) return;
+  scene.remove(player.mesh);
+  player.mesh.geometry.dispose();
+  player.mesh.material.dispose();
+}
