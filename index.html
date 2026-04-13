@@ -1,14 +1,14 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="es">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Grid Shift — 2.5D Puzzle</title>
+    <title>K-27 «Vector» — infiltración telequinética</title>
     <style>
       * { margin: 0; box-sizing: border-box; }
       html, body { overflow: hidden; height: 100%; background: #1a1d24; }
       canvas { display: block; }
-      #level-clear-overlay {
+      #narrative-overlay {
         position: fixed;
         inset: 0;
         display: none;
@@ -22,34 +22,34 @@
         pointer-events: auto;
         cursor: pointer;
       }
-      #level-clear-overlay.visible { display: flex; }
-      #level-clear-overlay .panel {
+      #narrative-overlay.visible { display: flex; }
+      #narrative-overlay .panel {
         text-align: center;
-        max-width: 22rem;
+        max-width: 24rem;
         padding: 1.75rem 1.5rem;
         border-radius: 12px;
         background: linear-gradient(165deg, #2a3140 0%, #1f242e 100%);
         box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.06);
         border: 1px solid rgba(170, 68, 255, 0.25);
       }
-      #level-clear-overlay h2 {
+      #narrative-overlay h2 {
         font-size: 1.35rem;
         font-weight: 600;
         margin-bottom: 0.5rem;
         color: #c9a8ff;
       }
-      #level-clear-overlay p {
+      #narrative-overlay p.body {
         font-size: 0.95rem;
         line-height: 1.45;
         opacity: 0.88;
         margin-bottom: 1rem;
       }
-      #level-clear-overlay .hint {
+      #narrative-overlay .hint {
         font-size: 0.82rem;
         opacity: 0.65;
         letter-spacing: 0.02em;
       }
-      #level-clear-overlay kbd {
+      #narrative-overlay kbd {
         display: inline-block;
         padding: 0.12rem 0.45rem;
         border-radius: 4px;
@@ -61,11 +61,11 @@
     </style>
   </head>
   <body>
-    <div id="level-clear-overlay" aria-live="polite" aria-hidden="true">
+    <div id="narrative-overlay" aria-live="polite" aria-hidden="true">
       <div class="panel">
-        <h2 id="level-clear-title">Nivel completado</h2>
-        <p id="level-clear-msg"></p>
-        <p class="hint">Pulsa <kbd>Enter</kbd>, <kbd>Espacio</kbd> o haz clic para continuar</p>
+        <h2 id="narrative-title"></h2>
+        <p id="narrative-body" class="body"></p>
+        <p class="hint" id="narrative-hint"></p>
       </div>
     </div>
     <script type="module" src="/src/main.js"></script>

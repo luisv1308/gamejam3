@@ -3,11 +3,16 @@ import { EnemyType, getChaserStepCandidatesToward } from './enemy.js';
 import { PUSH_TILES } from './constants.js';
 
 export const Phase = {
+  /** Pantalla de bienvenida / contexto; el mundo no avanza. */
+  INTRO: 'intro',
   PLAYER: 'player',
   ENEMY: 'enemy',
   /** Nivel limpio: UI de victoria, juego pausado hasta confirmar. */
   LEVEL_CLEAR: 'level_clear',
+  /** Campaña completada (último sector); pantalla final. */
   GAME_OVER: 'game_over',
+  /** Interceptado por seguridad; reintento desde el mismo sector. */
+  DEFEAT: 'defeat',
 };
 
 function posKey(gx, gz) {

@@ -20,6 +20,19 @@ import {
 } from './turnManager.js';
 import { Shockwave } from './effects/shockwave.js';
 
+/** Nombres de sector para copy narrativo (alineado con LEVEL_COUNT). */
+const SECTOR_NAMES = [
+  'Sector 01 — Archivo de sujetos',
+  'Sector 02 — Contención',
+  'Sector 03 — Núcleo de datos',
+];
+
+const INTRO_TITLE = 'K-27 «Vector»';
+const INTRO_BODY =
+  'Telekinesis táctica. Objetivo: infiltrar la instalación y borrar los expedientes que convierten a las personas en activos del programa. La seguridad reconoce tu firma psíquica.';
+const INTRO_HINT =
+  'WASD mover · Flechas apuntar · Espacio telequinesis (shift) · Enter o clic para comenzar';
+
 // ——— Game state ———
 let scene;
 let camera;
@@ -45,29 +58,68 @@ let currentLevelIndex = 0;
 /** Solo en DEV: { sync(levelIndex) } */
 let devMenuApi = null;
 
-function hideLevelClearOverlay() {
-  const el = document.getElementById('level-clear-overlay');
+function hideNarrativeOverlay() {
+  const el = document.getElementById('narrative-overlay');
   if (!el) return;
   el.classList.remove('visible');
   el.setAttribute('aria-hidden', 'true');
 }
 
-function showLevelClearOverlay(title, message) {
-  const el = document.getElementById('level-clear-overlay');
+function showNarrativeOverlay(title, body, hint) {
+  const el = document.getElementById('narrative-overlay');
   if (!el) return;
-  const h = el.querySelector('#level-clear-title');
-  const p = el.querySelector('#level-clear-msg');
+  const h = el.querySelector('#narrative-title');
+  const p = el.querySelector('#narrative-body');
+  const hi = el.querySelector('#narrative-hint');
   if (h) h.textContent = title;
-  if (p) p.textContent = message;
+  if (p) p.textContent = body;
+  if (hi) hi.textContent = hint;
   el.classList.add('visible');
   el.setAttribute('aria-hidden', 'false');
 }
 
+function isNarrativePausePhase() {
+  return (
+    phase === Phase.INTRO ||
+    phase === Phase.LEVEL_CLEAR ||
+    phase === Phase.GAME_OVER ||
+    phase === Phase.DEFEAT
+  );
+}
+
 function continueToNextLevel() {
   if (phase !== Phase.LEVEL_CLEAR) return;
-  hideLevelClearOverlay();
+  hideNarrativeOverlay();
   currentLevelIndex++;
   loadLevelFromIndex(currentLevelIndex);
+}
+
+function dismissIntro() {
+  if (phase !== Phase.INTRO) return;
+  hideNarrativeOverlay();
+  phase = Phase.PLAYER;
+  busy = false;
+}
+
+function continueFromDefeat() {
+  if (phase !== Phase.DEFEAT) return;
+  hideNarrativeOverlay();
+  restartCurrentLevel();
+}
+
+function continueFromVictory() {
+  if (phase !== Phase.GAME_OVER) return;
+  hideNarrativeOverlay();
+  currentLevelIndex = 0;
+  loadLevelFromIndex(0);
+}
+
+function showDefeatNarrative() {
+  showNarrativeOverlay(
+    'Firma psíquica colapsada',
+    'Protocolo de contención te ha interceptado. Reinicio del sector.',
+    'Pulsa Enter, Espacio o clic para reintentar'
+  );
 }
 
 /** Cian base | rojo fuerte | amarillo combo | morado especial (victoria). */
@@ -94,30 +146,43 @@ function enemyAt(gx, gz) {
 }
 
 function maybeWin() {
-  if (phase === Phase.LEVEL_CLEAR || phase === Phase.GAME_OVER) return;
+  if (
+    phase === Phase.LEVEL_CLEAR ||
+    phase === Phase.GAME_OVER ||
+    phase === Phase.INTRO ||
+    phase === Phase.DEFEAT
+  ) {
+    return;
+  }
   if (countLivingEnemies(enemies) !== 0) return;
   if (enemies.length > 0) return;
 
   if (currentLevelIndex >= LEVEL_COUNT - 1) {
-    console.log('[progreso] ¡Todos los niveles completados!');
+    console.log('[progreso] Campaña completada');
     phase = Phase.GAME_OVER;
-    busy = false;
-    hideLevelClearOverlay();
+    busy = true;
+    showNarrativeOverlay(
+      'Expedientes aniquilados',
+      'Los dossiers dejan de existir. Nadie vuelve a ser propiedad del programa.',
+      'Enter, Espacio o clic para reiniciar la campaña desde el Sector 01'
+    );
     return;
   }
 
   console.log(`[progreso] Nivel ${currentLevelIndex + 1} completado`);
   phase = Phase.LEVEL_CLEAR;
   busy = true;
-  const n = currentLevelIndex + 1;
-  showLevelClearOverlay(
-    `Nivel ${n} completado`,
-    `Siguiente: nivel ${n + 1} de ${LEVEL_COUNT}.`
+  const doneName = SECTOR_NAMES[currentLevelIndex] ?? `Sector ${currentLevelIndex + 1}`;
+  const nextName = SECTOR_NAMES[currentLevelIndex + 1] ?? `Sector ${currentLevelIndex + 2}`;
+  showNarrativeOverlay(
+    'Sector neutralizado',
+    `${doneName} despejado. Ingresando: ${nextName}.`,
+    'Pulsa Enter, Espacio o clic para continuar'
   );
 }
 
 function loadLevelFromIndex(idx) {
-  hideLevelClearOverlay();
+  hideNarrativeOverlay();
   const ok = loadLevel(idx, {
     onBeforeLoad: clearLevelEntities,
     applyLayout: applyLevelLayout,
@@ -132,7 +197,7 @@ function loadLevelFromIndex(idx) {
 }
 
 function restartCurrentLevel() {
-  hideLevelClearOverlay();
+  hideNarrativeOverlay();
   console.log(`[progreso] Reinicio del nivel ${currentLevelIndex + 1}`);
   loadLevelFromIndex(currentLevelIndex);
 }
@@ -190,7 +255,9 @@ function beginEnemyPhase() {
   phase = Phase.ENEMY;
   const { lost, moves } = planEnemyTurn(player, enemies);
   if (lost) {
-    restartCurrentLevel();
+    phase = Phase.DEFEAT;
+    busy = true;
+    showDefeatNarrative();
     return;
   }
   if (moves.length === 0) {
@@ -211,13 +278,27 @@ function beginEnemyPhase() {
 }
 
 function finishEnemyPhase() {
-  if (phase === Phase.GAME_OVER || phase === Phase.LEVEL_CLEAR) return;
+  if (
+    phase === Phase.GAME_OVER ||
+    phase === Phase.LEVEL_CLEAR ||
+    phase === Phase.INTRO ||
+    phase === Phase.DEFEAT
+  ) {
+    return;
+  }
   phase = Phase.PLAYER;
   busy = false;
 }
 
 function onPlayerMoveComplete() {
-  if (phase === Phase.GAME_OVER || phase === Phase.LEVEL_CLEAR) return;
+  if (
+    phase === Phase.GAME_OVER ||
+    phase === Phase.LEVEL_CLEAR ||
+    phase === Phase.INTRO ||
+    phase === Phase.DEFEAT
+  ) {
+    return;
+  }
   beginEnemyPhase();
 }
 
@@ -371,7 +452,9 @@ function startShift() {
     applyShiftCameraShake();
 
     if (r.lost) {
-      restartCurrentLevel();
+      phase = Phase.DEFEAT;
+      busy = true;
+      showDefeatNarrative();
       return;
     }
 
@@ -523,12 +606,20 @@ function tickAnimations(dt) {
     }
   }
 
-  if (phase !== Phase.GAME_OVER && phase !== Phase.LEVEL_CLEAR) {
+  if (!isNarrativePausePhase()) {
     maybeWin();
   }
 }
 
 function onKeyDown(ev) {
+  if (phase === Phase.INTRO) {
+    if (ev.code === 'Enter' || ev.code === 'Space') {
+      ev.preventDefault();
+      dismissIntro();
+    }
+    return;
+  }
+
   if (phase === Phase.LEVEL_CLEAR) {
     if (ev.code === 'Enter' || ev.code === 'Space') {
       ev.preventDefault();
@@ -537,7 +628,21 @@ function onKeyDown(ev) {
     return;
   }
 
-  if (phase === Phase.GAME_OVER) return;
+  if (phase === Phase.DEFEAT) {
+    if (ev.code === 'Enter' || ev.code === 'Space') {
+      ev.preventDefault();
+      continueFromDefeat();
+    }
+    return;
+  }
+
+  if (phase === Phase.GAME_OVER) {
+    if (ev.code === 'Enter' || ev.code === 'Space') {
+      ev.preventDefault();
+      continueFromVictory();
+    }
+    return;
+  }
 
   if (ev.code === 'Space') {
     if (phase === Phase.PLAYER && !busy) {
@@ -690,12 +795,18 @@ function setupScene() {
 
   currentLevelIndex = 0;
   loadLevelFromIndex(0);
+  phase = Phase.INTRO;
+  busy = true;
+  showNarrativeOverlay(INTRO_TITLE, INTRO_BODY, INTRO_HINT);
 
   window.addEventListener('keydown', onKeyDown);
   window.addEventListener('resize', onResize);
 
-  document.getElementById('level-clear-overlay')?.addEventListener('click', () => {
+  document.getElementById('narrative-overlay')?.addEventListener('click', () => {
     if (phase === Phase.LEVEL_CLEAR) continueToNextLevel();
+    else if (phase === Phase.INTRO) dismissIntro();
+    else if (phase === Phase.DEFEAT) continueFromDefeat();
+    else if (phase === Phase.GAME_OVER) continueFromVictory();
   });
 }
 
@@ -715,7 +826,7 @@ function animate(now) {
   requestAnimationFrame(animate);
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
-  if (phase !== Phase.LEVEL_CLEAR) {
+  if (!isNarrativePausePhase()) {
     tickAnimations(dt);
     shockwave?.update(dt);
   }
