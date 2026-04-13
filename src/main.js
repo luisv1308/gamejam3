@@ -44,7 +44,7 @@ const INTRO_TITLE = 'K-27 «Vector»';
 const INTRO_BODY =
   'Telekinesis táctica. Objetivo: infiltrar la instalación y borrar los expedientes que convierten a las personas en activos del programa. La seguridad reconoce tu firma psíquica.';
 const INTRO_HINT =
-  'WASD mover · Flechas apuntar · Espacio telequinesis (shift) · Enter o clic para comenzar';
+  'WASD mover · Flechas apuntar · Espacio telequinesis (shift) · Esc pausa · Enter o clic para comenzar';
 
 // ——— Game state ———
 let scene;
@@ -68,6 +68,8 @@ let busy = false;
 /** Durante el delay de 0,1 s antes de resolver el shift. */
 let shiftDelayPending = false;
 let currentLevelIndex = 0;
+/** Fase de juego antes de abrir pausa (PLAYER o ENEMY). */
+let phaseBeforePause = Phase.PLAYER;
 /** Solo en DEV: { sync(levelIndex) } */
 let devMenuApi = null;
 
@@ -87,8 +89,57 @@ function updateHud() {
     else if (phase === Phase.LEVEL_CLEAR) line = 'Sector limpio — continúa';
     else if (phase === Phase.DEFEAT) line = 'Protocolo activo — reintentar';
     else if (phase === Phase.GAME_OVER) line = 'Campaña completada';
+    else if (phase === Phase.PAUSE) line = 'Pausa';
     phaseEl.textContent = line;
   }
+}
+
+function showPauseOverlay() {
+  const el = document.getElementById('pause-overlay');
+  if (!el) return;
+  el.classList.add('visible');
+  el.setAttribute('aria-hidden', 'false');
+}
+
+function hidePauseOverlay() {
+  const el = document.getElementById('pause-overlay');
+  if (!el) return;
+  el.classList.remove('visible');
+  el.setAttribute('aria-hidden', 'true');
+}
+
+function togglePause() {
+  if (phase === Phase.PAUSE) {
+    phase = phaseBeforePause;
+    hidePauseOverlay();
+    updateHud();
+    return;
+  }
+  if (
+    phase === Phase.INTRO ||
+    phase === Phase.LEVEL_CLEAR ||
+    phase === Phase.GAME_OVER ||
+    phase === Phase.DEFEAT
+  ) {
+    return;
+  }
+  if (phase !== Phase.PLAYER && phase !== Phase.ENEMY) return;
+  if (busy || shiftDelayPending) return;
+  phaseBeforePause = phase;
+  phase = Phase.PAUSE;
+  showPauseOverlay();
+  updateHud();
+}
+
+/** Mundo lógico y animaciones detenidos (narrativa + pausa manual). */
+function isWorldFrozen() {
+  return (
+    phase === Phase.INTRO ||
+    phase === Phase.LEVEL_CLEAR ||
+    phase === Phase.GAME_OVER ||
+    phase === Phase.DEFEAT ||
+    phase === Phase.PAUSE
+  );
 }
 
 function hideNarrativeOverlay() {
@@ -109,15 +160,6 @@ function showNarrativeOverlay(title, body, hint) {
   if (hi) hi.textContent = hint;
   el.classList.add('visible');
   el.setAttribute('aria-hidden', 'false');
-}
-
-function isNarrativePausePhase() {
-  return (
-    phase === Phase.INTRO ||
-    phase === Phase.LEVEL_CLEAR ||
-    phase === Phase.GAME_OVER ||
-    phase === Phase.DEFEAT
-  );
 }
 
 function continueToNextLevel() {
@@ -189,7 +231,8 @@ function maybeWin() {
     phase === Phase.LEVEL_CLEAR ||
     phase === Phase.GAME_OVER ||
     phase === Phase.INTRO ||
-    phase === Phase.DEFEAT
+    phase === Phase.DEFEAT ||
+    phase === Phase.PAUSE
   ) {
     return;
   }
@@ -226,6 +269,7 @@ function maybeWin() {
 
 function loadLevelFromIndex(idx) {
   hideNarrativeOverlay();
+  hidePauseOverlay();
   const ok = loadLevel(idx, {
     onBeforeLoad: clearLevelEntities,
     applyLayout: applyLevelLayout,
@@ -322,7 +366,8 @@ function finishEnemyPhase() {
     phase === Phase.GAME_OVER ||
     phase === Phase.LEVEL_CLEAR ||
     phase === Phase.INTRO ||
-    phase === Phase.DEFEAT
+    phase === Phase.DEFEAT ||
+    phase === Phase.PAUSE
   ) {
     return;
   }
@@ -335,7 +380,8 @@ function onPlayerMoveComplete() {
     phase === Phase.GAME_OVER ||
     phase === Phase.LEVEL_CLEAR ||
     phase === Phase.INTRO ||
-    phase === Phase.DEFEAT
+    phase === Phase.DEFEAT ||
+    phase === Phase.PAUSE
   ) {
     return;
   }
@@ -381,7 +427,7 @@ function clearShiftPreview() {
 function updateAimVisuals() {
   if (!player || !aimIndicator || !shiftPreviewLine) return;
 
-  if (phase !== Phase.PLAYER || busy) {
+  if (phase === Phase.PAUSE || phase !== Phase.PLAYER || busy) {
     aimIndicator.visible = false;
     shiftPreviewLine.visible = false;
     clearShiftPreview();
@@ -473,6 +519,7 @@ function startShift() {
 
   setTimeout(() => {
     shiftDelayPending = false;
+    if (phase === Phase.PAUSE) return;
     if (phase !== Phase.PLAYER || phase === Phase.GAME_OVER) {
       busy = false;
       return;
@@ -658,13 +705,23 @@ function tickAnimations(dt) {
     }
   }
 
-  if (!isNarrativePausePhase()) {
+  if (!isWorldFrozen()) {
     maybeWin();
   }
 }
 
 function onKeyDown(ev) {
   void resumeAudio();
+
+  if (ev.code === 'Escape') {
+    ev.preventDefault();
+    if (phase === Phase.INTRO) {
+      void dismissIntro();
+      return;
+    }
+    togglePause();
+    return;
+  }
 
   if (phase === Phase.INTRO) {
     if (ev.code === 'Enter' || ev.code === 'Space') {
@@ -909,6 +966,10 @@ function setupScene() {
   window.addEventListener('keydown', onKeyDown);
   window.addEventListener('resize', onResize);
 
+  document.getElementById('pause-overlay')?.addEventListener('click', () => {
+    if (phase === Phase.PAUSE) togglePause();
+  });
+
   document.getElementById('narrative-overlay')?.addEventListener('click', () => {
     if (phase === Phase.LEVEL_CLEAR) continueToNextLevel();
     else if (phase === Phase.INTRO) dismissIntro();
@@ -933,7 +994,7 @@ function animate(now) {
   requestAnimationFrame(animate);
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
-  if (!isNarrativePausePhase()) {
+  if (!isWorldFrozen()) {
     tickAnimations(dt);
     shockwave?.update(dt);
   }

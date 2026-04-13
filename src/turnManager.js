@@ -13,6 +13,8 @@ export const Phase = {
   GAME_OVER: 'game_over',
   /** Interceptado por seguridad; reintento desde el mismo sector. */
   DEFEAT: 'defeat',
+  /** Pausa manual (Esc); se restaura phaseBeforePause. */
+  PAUSE: 'pause',
 };
 
 function posKey(gx, gz) {

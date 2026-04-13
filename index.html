@@ -104,6 +104,48 @@
       #hud-phase:empty {
         display: none;
       }
+      #pause-overlay {
+        position: fixed;
+        inset: 0;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        z-index: 9;
+        background: rgba(12, 14, 18, 0.55);
+        backdrop-filter: blur(4px);
+        font-family: system-ui, "Segoe UI", Roboto, sans-serif;
+        color: #e8eaef;
+        pointer-events: auto;
+        cursor: pointer;
+      }
+      #pause-overlay.visible { display: flex; }
+      #pause-overlay .pause-panel {
+        text-align: center;
+        padding: 1.35rem 1.75rem;
+        border-radius: 10px;
+        background: rgba(30, 35, 44, 0.92);
+        border: 1px solid rgba(124, 255, 182, 0.28);
+        box-shadow: 0 8px 28px rgba(0, 0, 0, 0.4);
+      }
+      #pause-overlay h2 {
+        font-size: 1.2rem;
+        font-weight: 600;
+        color: #7cffb6;
+        margin-bottom: 0.45rem;
+      }
+      #pause-overlay .hint {
+        font-size: 0.82rem;
+        opacity: 0.72;
+      }
+      #pause-overlay kbd {
+        display: inline-block;
+        padding: 0.1rem 0.4rem;
+        border-radius: 4px;
+        background: #141820;
+        border: 1px solid #3d4452;
+        font-size: 0.76rem;
+        font-family: inherit;
+      }
     </style>
   </head>
   <body>
@@ -112,6 +154,12 @@
         <div id="hud-sector"></div>
         <div id="hud-progress"></div>
         <div id="hud-phase" aria-live="polite"></div>
+      </div>
+    </div>
+    <div id="pause-overlay" aria-hidden="true">
+      <div class="pause-panel">
+        <h2>Pausa</h2>
+        <p class="hint">Pulsa <kbd>Esc</kbd> o haz clic para continuar</p>
       </div>
     </div>
     <div id="narrative-overlay" aria-live="polite" aria-hidden="true">
