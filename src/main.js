@@ -19,6 +19,18 @@ import {
   Phase,
 } from './turnManager.js';
 import { Shockwave } from './effects/shockwave.js';
+import {
+  resumeAudio,
+  startAmbient,
+  playPlayerStep,
+  playAimTick,
+  playShiftCharge,
+  playShiftImpact,
+  playEnemyDeath,
+  playSectorClear,
+  playDefeat,
+  playVictory,
+} from './audio/gameAudio.js';
 
 /** Nombres de sector para copy narrativo (alineado con LEVEL_COUNT). */
 const SECTOR_NAMES = [
@@ -94,9 +106,11 @@ function continueToNextLevel() {
   loadLevelFromIndex(currentLevelIndex);
 }
 
-function dismissIntro() {
+async function dismissIntro() {
   if (phase !== Phase.INTRO) return;
   hideNarrativeOverlay();
+  await resumeAudio();
+  startAmbient();
   phase = Phase.PLAYER;
   busy = false;
 }
@@ -114,7 +128,9 @@ function continueFromVictory() {
   loadLevelFromIndex(0);
 }
 
-function showDefeatNarrative() {
+/** @param {{ fromShift?: boolean }} [opts] Si el shift te aplasta, el impacto ya lleva SFX. */
+function showDefeatNarrative(opts = {}) {
+  if (!opts.fromShift) playDefeat();
   showNarrativeOverlay(
     'Firma psíquica colapsada',
     'Protocolo de contención te ha interceptado. Reinicio del sector.',
@@ -166,12 +182,14 @@ function maybeWin() {
       'Los dossiers dejan de existir. Nadie vuelve a ser propiedad del programa.',
       'Enter, Espacio o clic para reiniciar la campaña desde el Sector 01'
     );
+    playVictory();
     return;
   }
 
   console.log(`[progreso] Nivel ${currentLevelIndex + 1} completado`);
   phase = Phase.LEVEL_CLEAR;
   busy = true;
+  playSectorClear();
   const doneName = SECTOR_NAMES[currentLevelIndex] ?? `Sector ${currentLevelIndex + 1}`;
   const nextName = SECTOR_NAMES[currentLevelIndex + 1] ?? `Sector ${currentLevelIndex + 2}`;
   showNarrativeOverlay(
@@ -257,7 +275,7 @@ function beginEnemyPhase() {
   if (lost) {
     phase = Phase.DEFEAT;
     busy = true;
-    showDefeatNarrative();
+    showDefeatNarrative({ fromShift: false });
     return;
   }
   if (moves.length === 0) {
@@ -307,6 +325,8 @@ function startPlayerMove(dx, dz) {
   const nz = player.gz + dz;
   if (!isWalkable(nx, nz)) return;
   if (enemyAt(nx, nz)) return;
+
+  playPlayerStep();
 
   const from = gridToWorld(player.gx, player.gz);
   const to = gridToWorld(nx, nz);
@@ -421,6 +441,8 @@ function startShift() {
   const line = collectEnemiesInFront(player.gx, player.gz, dx, dz, enemies);
   if (line.length === 0) return;
 
+  playShiftCharge();
+
   shiftDelayPending = true;
   busy = true;
 
@@ -450,11 +472,17 @@ function startShift() {
     const pw = gridToWorld(player.gx, player.gz);
     shockwave.trigger(pw.x, pw.z, waveColor);
     applyShiftCameraShake();
+    playShiftImpact({
+      lost: r.lost,
+      won,
+      destroyed,
+      lineLen: line2.length,
+    });
 
     if (r.lost) {
       phase = Phase.DEFEAT;
       busy = true;
-      showDefeatNarrative();
+      showDefeatNarrative({ fromShift: true });
       return;
     }
 
@@ -539,6 +567,7 @@ function updateMovementAnimations(dt, speed) {
           e.shiftDeathAfterTravel = false;
           e.pendingRemove = true;
           e.destroyAnim = 1;
+          playEnemyDeath();
         }
         e.animFrom = null;
         e.animTo = null;
@@ -612,6 +641,8 @@ function tickAnimations(dt) {
 }
 
 function onKeyDown(ev) {
+  void resumeAudio();
+
   if (phase === Phase.INTRO) {
     if (ev.code === 'Enter' || ev.code === 'Space') {
       ev.preventDefault();
@@ -654,22 +685,34 @@ function onKeyDown(ev) {
 
   if (ev.code === 'ArrowUp') {
     ev.preventDefault();
-    if (phase === Phase.PLAYER && !busy) setPlayerAim(player, 0, -1);
+    if (phase === Phase.PLAYER && !busy) {
+      if (player.aim.x !== 0 || player.aim.z !== -1) playAimTick();
+      setPlayerAim(player, 0, -1);
+    }
     return;
   }
   if (ev.code === 'ArrowDown') {
     ev.preventDefault();
-    if (phase === Phase.PLAYER && !busy) setPlayerAim(player, 0, 1);
+    if (phase === Phase.PLAYER && !busy) {
+      if (player.aim.x !== 0 || player.aim.z !== 1) playAimTick();
+      setPlayerAim(player, 0, 1);
+    }
     return;
   }
   if (ev.code === 'ArrowLeft') {
     ev.preventDefault();
-    if (phase === Phase.PLAYER && !busy) setPlayerAim(player, -1, 0);
+    if (phase === Phase.PLAYER && !busy) {
+      if (player.aim.x !== -1 || player.aim.z !== 0) playAimTick();
+      setPlayerAim(player, -1, 0);
+    }
     return;
   }
   if (ev.code === 'ArrowRight') {
     ev.preventDefault();
-    if (phase === Phase.PLAYER && !busy) setPlayerAim(player, 1, 0);
+    if (phase === Phase.PLAYER && !busy) {
+      if (player.aim.x !== 1 || player.aim.z !== 0) playAimTick();
+      setPlayerAim(player, 1, 0);
+    }
     return;
   }
 
