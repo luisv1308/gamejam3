@@ -58,9 +58,62 @@
         font-size: 0.78rem;
         font-family: inherit;
       }
+      #game-hud {
+        position: fixed;
+        top: 14px;
+        right: 14px;
+        z-index: 5;
+        pointer-events: none;
+        text-align: right;
+        font-family: system-ui, "Segoe UI", Roboto, sans-serif;
+        color: #e8eaef;
+        text-shadow: 0 1px 3px rgba(0, 0, 0, 0.65);
+        max-width: min(22rem, 88vw);
+      }
+      #game-hud .hud-panel {
+        display: inline-block;
+        padding: 0.65rem 0.85rem;
+        border-radius: 8px;
+        background: rgba(22, 26, 34, 0.82);
+        border: 1px solid rgba(170, 68, 255, 0.22);
+        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+        backdrop-filter: blur(8px);
+      }
+      #hud-sector {
+        font-size: 0.88rem;
+        font-weight: 600;
+        color: #c9a8ff;
+        letter-spacing: 0.02em;
+        line-height: 1.3;
+      }
+      #hud-progress {
+        margin-top: 0.28rem;
+        font-size: 0.75rem;
+        font-weight: 500;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #9aa8bc;
+      }
+      #hud-phase {
+        margin-top: 0.35rem;
+        font-size: 0.72rem;
+        color: #7cffb6;
+        letter-spacing: 0.04em;
+        min-height: 1.1em;
+      }
+      #hud-phase:empty {
+        display: none;
+      }
     </style>
   </head>
   <body>
+    <div id="game-hud" aria-label="Estado de misión">
+      <div class="hud-panel">
+        <div id="hud-sector"></div>
+        <div id="hud-progress"></div>
+        <div id="hud-phase" aria-live="polite"></div>
+      </div>
+    </div>
     <div id="narrative-overlay" aria-live="polite" aria-hidden="true">
       <div class="panel">
         <h2 id="narrative-title"></h2>

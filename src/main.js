@@ -71,6 +71,26 @@ let currentLevelIndex = 0;
 /** Solo en DEV: { sync(levelIndex) } */
 let devMenuApi = null;
 
+function updateHud() {
+  const sectorEl = document.getElementById('hud-sector');
+  const progressEl = document.getElementById('hud-progress');
+  const phaseEl = document.getElementById('hud-phase');
+  if (!sectorEl || !progressEl) return;
+
+  const i = currentLevelIndex;
+  sectorEl.textContent = SECTOR_NAMES[i] ?? `Sector ${String(i + 1).padStart(2, '0')}`;
+  progressEl.textContent = `Nivel ${i + 1} / ${LEVEL_COUNT}`;
+
+  if (phaseEl) {
+    let line = '';
+    if (phase === Phase.INTRO) line = 'Briefing';
+    else if (phase === Phase.LEVEL_CLEAR) line = 'Sector limpio — continúa';
+    else if (phase === Phase.DEFEAT) line = 'Protocolo activo — reintentar';
+    else if (phase === Phase.GAME_OVER) line = 'Campaña completada';
+    phaseEl.textContent = line;
+  }
+}
+
 function hideNarrativeOverlay() {
   const el = document.getElementById('narrative-overlay');
   if (!el) return;
@@ -114,6 +134,7 @@ async function dismissIntro() {
   startAmbient();
   phase = Phase.PLAYER;
   busy = false;
+  updateHud();
 }
 
 function continueFromDefeat() {
@@ -137,6 +158,7 @@ function showDefeatNarrative(opts = {}) {
     'Protocolo de contención te ha interceptado. Reinicio del sector.',
     'Pulsa Enter, Espacio o clic para reintentar'
   );
+  updateHud();
 }
 
 /** Cian base | rojo fuerte | amarillo combo | morado especial (victoria). */
@@ -184,6 +206,7 @@ function maybeWin() {
       'Enter, Espacio o clic para reiniciar la campaña desde el Sector 01'
     );
     playVictory();
+    updateHud();
     return;
   }
 
@@ -191,6 +214,7 @@ function maybeWin() {
   phase = Phase.LEVEL_CLEAR;
   busy = true;
   playSectorClear();
+  updateHud();
   const doneName = SECTOR_NAMES[currentLevelIndex] ?? `Sector ${currentLevelIndex + 1}`;
   const nextName = SECTOR_NAMES[currentLevelIndex + 1] ?? `Sector ${currentLevelIndex + 2}`;
   showNarrativeOverlay(
@@ -213,6 +237,7 @@ function loadLevelFromIndex(idx) {
   phase = Phase.PLAYER;
   busy = false;
   devMenuApi?.sync?.(idx);
+  updateHud();
 }
 
 function restartCurrentLevel() {
@@ -879,6 +904,7 @@ function setupScene() {
   phase = Phase.INTRO;
   busy = true;
   showNarrativeOverlay(INTRO_TITLE, INTRO_BODY, INTRO_HINT);
+  updateHud();
 
   window.addEventListener('keydown', onKeyDown);
   window.addEventListener('resize', onResize);
