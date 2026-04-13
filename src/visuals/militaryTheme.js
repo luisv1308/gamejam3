@@ -48,9 +48,16 @@ export const MilitaryTheme = {
   playerVisor: 0x00c9b0,
   playerVisorEmissive: 0x00ffc8,
 
-  /** Enemigos: seguridad móvil vs ancla estática. */
-  enemyChaser: 0x8b3d3d,
-  enemyChaserDark: 0x6a2f2f,
-  enemyStatic: 0xc78a2e,
-  enemyStaticDark: 0x9a6b22,
+  /**
+   * Seguridad interna de la instalación (uniforme acorde al suelo / muros).
+   * Chaser: patrulla, franja reflectante fría. Static: puesto, alta visibilidad ámbar.
+   */
+  securityShirt: 0x334b5f,
+  securityShirtDark: 0x2a3d4e,
+  securityVest: 0x232c35,
+  securityPants: 0x262f38,
+  securityCap: 0x1a222a,
+  securitySkin: 0xffc84a,
+  securityStripeChaser: 0xb8c8d4,
+  securityStripeStatic: 0xf0b429,
 };
