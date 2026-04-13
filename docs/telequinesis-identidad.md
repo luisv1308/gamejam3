@@ -20,3 +20,7 @@ Coordenadas: `ELEVATOR_GRID_GX`, `ELEVATOR_GRID_GZ` e índice `ELEVATOR_TRANSITI
 
 - Mecánica principal: **Shift** (empuje en línea).
 - Copy de briefing: infiltrar, borrar dossiers, evitar contención.
+
+## Backlog de diseño
+
+- **[Cosas a implementar](cosas-a-implementar.md)** — mecánicas propuestas, enemigos, trampas, mundos 2–3 y grids de niveles 4–10 (bocetos 8×8, alineados al motor).
