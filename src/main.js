@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { GRID_SIZE, TILE_SIZE, PLAYER_SPEED, ENEMY_SPEED, SHIFT_MAX_RANGE } from './constants.js';
 import {
   gridToWorld,
+  cardinalYawFromDelta,
   isWalkable,
   collectEnemiesInFront,
   isInsideGrid,
@@ -53,9 +54,7 @@ let renderer;
 let shockwave;
 /** Posición de reposo de la cámara (para screen-shake sin deriva). */
 let cameraRest;
-let aimIndicator;
-let shiftPreviewLine;
-/** Planos sobre el suelo: una por casilla de alcance del shift. */
+/** Planos en el suelo: casillas de alcance del shift (sin barra ni línea 3D). */
 let rangeTileMeshes = [];
 let rangeHighlightGeom = null;
 let wallSharedGeom = null;
@@ -333,6 +332,13 @@ function applyLevelLayout(layout) {
     enemies.push(makeEnemy(t, spec.gx, spec.gz, scene));
   }
   player = createPlayer(scene, layout.playerGx, layout.playerGz);
+  for (const e of enemies) {
+    const edx = player.gx - e.gx;
+    const edz = player.gz - e.gz;
+    if (edx !== 0 || edz !== 0) {
+      e.mesh.rotation.y = cardinalYawFromDelta(edx, edz);
+    }
+  }
 }
 
 function beginEnemyPhase() {
@@ -350,10 +356,17 @@ function beginEnemyPhase() {
   }
   for (const m of moves) {
     const e = m.enemy;
+    const ogx = e.gx;
+    const ogz = e.gz;
     const from = gridToWorld(e.gx, e.gz);
     e.animFrom = { x: from.x, y: from.y, z: from.z };
     e.gx = m.gx;
     e.gz = m.gz;
+    const mdx = e.gx - ogx;
+    const mdz = e.gz - ogz;
+    if (mdx !== 0 || mdz !== 0) {
+      e.mesh.rotation.y = cardinalYawFromDelta(mdx, mdz);
+    }
     const to = gridToWorld(e.gx, e.gz);
     e.animTo = { x: to.x, y: to.y, z: to.z };
     e.animT = 0;
@@ -425,11 +438,20 @@ function clearShiftPreview() {
 }
 
 function updateAimVisuals() {
-  if (!player || !aimIndicator || !shiftPreviewLine) return;
+  if (!player) return;
 
-  if (phase === Phase.PAUSE || phase !== Phase.PLAYER || busy) {
-    aimIndicator.visible = false;
-    shiftPreviewLine.visible = false;
+  if (phase === Phase.PAUSE) {
+    clearShiftPreview();
+    return;
+  }
+
+  if (phase === Phase.PLAYER) {
+    const ax = player.aim.x;
+    const az = player.aim.z;
+    player.mesh.rotation.y = cardinalYawFromDelta(ax, az);
+  }
+
+  if (phase !== Phase.PLAYER || busy) {
     clearShiftPreview();
     return;
   }
@@ -462,32 +484,6 @@ function updateAimVisuals() {
     cx += ax;
     cz += az;
   }
-
-  aimIndicator.visible = true;
-  shiftPreviewLine.visible = true;
-  const p = gridToWorld(player.gx, player.gz);
-  aimIndicator.position.set(p.x + ax * 0.45, 0.08, p.z + az * 0.45);
-  aimIndicator.rotation.y = Math.atan2(ax, az);
-
-  const w0 = gridToWorld(player.gx, player.gz);
-  const pts = [new THREE.Vector3(w0.x, 0.04, w0.z)];
-  let gx = player.gx + ax;
-  let gz = player.gz + az;
-  let steps = 0;
-  while (steps < SHIFT_MAX_RANGE) {
-    if (!isInsideGrid(gx, gz)) break;
-    if (isWall(gx, gz)) break;
-    const w = gridToWorld(gx, gz);
-    pts.push(new THREE.Vector3(w.x, 0.04, w.z));
-    gx += ax;
-    gz += az;
-    steps++;
-  }
-  if (pts.length === 1) {
-    pts.push(new THREE.Vector3(w0.x + ax * 0.35, 0.04, w0.z + az * 0.35));
-  }
-  shiftPreviewLine.geometry.dispose();
-  shiftPreviewLine.geometry = new THREE.BufferGeometry().setFromPoints(pts);
 
   const inLine = new Set(collectEnemiesInFront(player.gx, player.gz, ax, az, enemies));
   for (const e of enemies) {
@@ -568,11 +564,21 @@ function startShift() {
       enemy.animTo = { x: to.x, y: to.y, z: to.z };
       enemy.animT = 0;
       enemy.shiftDeathAfterTravel = true;
+      const sdx = endGx - row.gx;
+      const sdz = endGz - row.gz;
+      if (sdx !== 0 || sdz !== 0) {
+        enemy.mesh.rotation.y = cardinalYawFromDelta(sdx, sdz);
+      }
       anyAnim = true;
     }
     for (const { e, gx, gz } of snap) {
       if (e.pendingRemove || e.shiftDeathAfterTravel) continue;
       if (e.gx !== gx || e.gz !== gz) {
+        const pdx = e.gx - gx;
+        const pdz = e.gz - gz;
+        if (pdx !== 0 || pdz !== 0) {
+          e.mesh.rotation.y = cardinalYawFromDelta(pdx, pdz);
+        }
         const from = gridToWorld(gx, gz);
         const to = gridToWorld(e.gx, e.gz);
         e.animFrom = { x: from.x, y: from.y, z: from.z };
@@ -919,32 +925,13 @@ function setupScene() {
     metalness: Theme.wallMetalness,
   });
 
-  const aimGeom = new THREE.BoxGeometry(0.18, 0.06, 0.9);
-  const aimMat = new THREE.MeshBasicMaterial({ color: 0x5cffd9 });
-  aimIndicator = new THREE.Mesh(aimGeom, aimMat);
-  scene.add(aimIndicator);
-
-  const lineMat = new THREE.LineBasicMaterial({
-    color: 0x7dffe8,
-    transparent: true,
-    opacity: 0.88,
-  });
-  shiftPreviewLine = new THREE.Line(
-    new THREE.BufferGeometry().setFromPoints([
-      new THREE.Vector3(0, 0.04, 0),
-      new THREE.Vector3(0.01, 0.04, 0),
-    ]),
-    lineMat
-  );
-  scene.add(shiftPreviewLine);
-
   rangeHighlightGeom = new THREE.PlaneGeometry(TILE_SIZE * 0.88, TILE_SIZE * 0.88);
   rangeTileMeshes = [];
   for (let i = 0; i < SHIFT_MAX_RANGE; i++) {
     const mat = new THREE.MeshBasicMaterial({
       color: 0x4ad4f0,
       transparent: true,
-      opacity: 0.34,
+      opacity: 0.36,
       depthWrite: false,
       side: THREE.DoubleSide,
     });

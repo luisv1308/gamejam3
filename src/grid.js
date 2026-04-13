@@ -2,7 +2,7 @@ import { GRID_SIZE, TILE_SIZE, SHIFT_MAX_RANGE } from './constants.js';
 
 /**
  * Array-based grid: coordinates are integer gx, gz in [0, GRID_SIZE).
- * World Y is 0 for floor; entities sit slightly above tiles.
+ * World Y = 0 es el suelo; ENTITY_ANCHOR_Y ancla pies al centro de casilla.
  */
 
 /** @type {Uint8Array | null} — 1 = muro (no transitable). */
@@ -22,10 +22,25 @@ export function isWall(gx, gz) {
   return wallMask !== null && wallMask[gz * GRID_SIZE + gx] === 1;
 }
 
+/** Y del ancla del personaje/enemigo: pies sobre el suelo (gridToWorld xz = centro de casilla). */
+export const ENTITY_ANCHOR_Y = TILE_SIZE * 0.028;
+
 export function gridToWorld(gx, gz) {
   const x = (gx - GRID_SIZE / 2 + 0.5) * TILE_SIZE;
   const z = (gz - GRID_SIZE / 2 + 0.5) * TILE_SIZE;
-  return { x, y: TILE_SIZE * 0.55, z };
+  return { x, y: ENTITY_ANCHOR_Y, z };
+}
+
+/**
+ * Rotación Y (Three.js) en una de 4 direcciones: N/S/E/W según Δ de casilla.
+ * Sin diagonales: gana el eje con mayor |Δ|; empate → prioridad X.
+ */
+export function cardinalYawFromDelta(dx, dz) {
+  if (dx === 0 && dz === 0) return 0;
+  if (Math.abs(dx) >= Math.abs(dz)) {
+    return dx > 0 ? Math.PI / 2 : -Math.PI / 2;
+  }
+  return dz > 0 ? 0 : Math.PI;
 }
 
 export function isInsideGrid(gx, gz) {
