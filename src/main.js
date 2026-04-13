@@ -1,7 +1,17 @@
 import * as THREE from 'three';
-import { GRID_SIZE, TILE_SIZE, PLAYER_SPEED, ENEMY_SPEED, SHIFT_MAX_RANGE } from './constants.js';
+import {
+  GRID_SIZE,
+  TILE_SIZE,
+  PLAYER_SPEED,
+  ENEMY_SPEED,
+  SHIFT_MAX_RANGE,
+  ELEVATOR_TRANSITION_LEVEL_INDEX,
+  ELEVATOR_GRID_GX,
+  ELEVATOR_GRID_GZ,
+} from './constants.js';
 import {
   gridToWorld,
+  ENTITY_ANCHOR_Y,
   cardinalYawFromDelta,
   isWalkable,
   collectEnemiesInFront,
@@ -20,6 +30,7 @@ import {
   Phase,
 } from './turnManager.js';
 import { Shockwave } from './effects/shockwave.js';
+import { buildElevatorStation } from './effects/elevatorStation.js';
 import { MilitaryTheme as Theme } from './visuals/militaryTheme.js';
 import {
   resumeAudio,
@@ -30,6 +41,7 @@ import {
   playShiftImpact,
   playEnemyDeath,
   playSectorClear,
+  playElevatorButton,
   playDefeat,
   playVictory,
 } from './audio/gameAudio.js';
@@ -38,7 +50,8 @@ import {
 const SECTOR_NAMES = [
   'Sector 01 — Archivo de sujetos',
   'Sector 02 — Contención',
-  'Sector 03 — Núcleo de datos',
+  'Sector 03 — Núcleo de datos (expedientes)',
+  'Planta 2 — Acceso restringido',
 ];
 
 const INTRO_TITLE = 'K-27 «Vector»';
@@ -72,6 +85,11 @@ let phaseBeforePause = Phase.PLAYER;
 /** Solo en DEV: { sync(levelIndex) } */
 let devMenuApi = null;
 
+/** Ascensor entre plantas: estado del cutscene (ver updateElevatorCutscene). */
+let elevatorRun = null;
+/** Cabina en escena durante el nivel 3; null en otros niveles. */
+let elevatorStationState = null;
+
 function updateHud() {
   const sectorEl = document.getElementById('hud-sector');
   const progressEl = document.getElementById('hud-progress');
@@ -86,6 +104,7 @@ function updateHud() {
     let line = '';
     if (phase === Phase.INTRO) line = 'Briefing';
     else if (phase === Phase.LEVEL_CLEAR) line = 'Sector limpio — continúa';
+    else if (phase === Phase.ELEVATOR) line = 'Ascensor — transición de planta';
     else if (phase === Phase.DEFEAT) line = 'Protocolo activo — reintentar';
     else if (phase === Phase.GAME_OVER) line = 'Campaña completada';
     else if (phase === Phase.PAUSE) line = 'Pausa';
@@ -118,7 +137,8 @@ function togglePause() {
     phase === Phase.INTRO ||
     phase === Phase.LEVEL_CLEAR ||
     phase === Phase.GAME_OVER ||
-    phase === Phase.DEFEAT
+    phase === Phase.DEFEAT ||
+    phase === Phase.ELEVATOR
   ) {
     return;
   }
@@ -137,7 +157,8 @@ function isWorldFrozen() {
     phase === Phase.LEVEL_CLEAR ||
     phase === Phase.GAME_OVER ||
     phase === Phase.DEFEAT ||
-    phase === Phase.PAUSE
+    phase === Phase.PAUSE ||
+    phase === Phase.ELEVATOR
   );
 }
 
@@ -146,6 +167,161 @@ function hideNarrativeOverlay() {
   if (!el) return;
   el.classList.remove('visible');
   el.setAttribute('aria-hidden', 'true');
+}
+
+function setElevatorFadeOpacity(opacity) {
+  const el = document.getElementById('elevator-fade');
+  if (!el) return;
+  el.style.opacity = String(Math.max(0, Math.min(1, opacity)));
+}
+
+function disposeElevatorStation() {
+  if (!elevatorStationState) return;
+  elevatorStationState.dispose(scene);
+  elevatorStationState = null;
+}
+
+function startElevatorCutscene() {
+  if (!player?.mesh || !elevatorStationState) return;
+  const ec = elevatorStationState;
+  const front = gridToWorld(ELEVATOR_GRID_GX, ELEVATOR_GRID_GZ + 1);
+  const inside = gridToWorld(ELEVATOR_GRID_GX, ELEVATOR_GRID_GZ);
+  setElevatorFadeOpacity(0);
+  elevatorRun = {
+    stage: 'fadeOut',
+    stageTime: 0,
+    liftGroup: ec.liftGroup,
+    doorL: ec.doorL,
+    doorR: ec.doorR,
+    doorLClosedX: ec.doorLClosedX,
+    doorRClosedX: ec.doorRClosedX,
+    doorOpenAmt: ec.doorOpenAmt,
+    front,
+    inside,
+    buttonPlayed: false,
+  };
+}
+
+function updateElevatorCutscene(dt) {
+  if (!elevatorRun || !player?.mesh) return;
+  const r = elevatorRun;
+  r.stageTime += dt;
+
+  const easeOut = (k) => 1 - (1 - k) * (1 - k);
+  const smooth = (k) => k * k * (3 - 2 * k);
+
+  switch (r.stage) {
+    case 'fadeOut': {
+      const d = 0.48;
+      setElevatorFadeOpacity(Math.min(1, r.stageTime / d));
+      if (r.stageTime >= d) {
+        player.mesh.position.set(r.front.x, ENTITY_ANCHOR_Y, r.front.z);
+        player.mesh.rotation.y = Math.PI;
+        player.gx = ELEVATOR_GRID_GX;
+        player.gz = ELEVATOR_GRID_GZ + 1;
+        r.stage = 'fadeIn';
+        r.stageTime = 0;
+      }
+      break;
+    }
+    case 'fadeIn': {
+      const d = 0.52;
+      setElevatorFadeOpacity(1 - Math.min(1, r.stageTime / d));
+      if (r.stageTime >= d) {
+        setElevatorFadeOpacity(0);
+        r.stage = 'button';
+        r.stageTime = 0;
+      }
+      break;
+    }
+    case 'button': {
+      if (!r.buttonPlayed) {
+        r.buttonPlayed = true;
+        void resumeAudio();
+        playElevatorButton();
+      }
+      if (r.stageTime >= 0.38) {
+        r.stage = 'doorsOpen';
+        r.stageTime = 0;
+      }
+      break;
+    }
+    case 'doorsOpen': {
+      const d = 0.42;
+      const k = Math.min(1, r.stageTime / d);
+      const e = easeOut(k);
+      r.doorL.position.x = r.doorLClosedX - e * r.doorOpenAmt;
+      r.doorR.position.x = r.doorRClosedX + e * r.doorOpenAmt;
+      if (r.stageTime >= d) {
+        r.stage = 'walkIn';
+        r.stageTime = 0;
+      }
+      break;
+    }
+    case 'walkIn': {
+      const d = 0.64;
+      const k = Math.min(1, r.stageTime / d);
+      const e = smooth(k);
+      player.mesh.position.x = r.front.x + (r.inside.x - r.front.x) * e;
+      player.mesh.position.z = r.front.z + (r.inside.z - r.front.z) * e;
+      player.mesh.position.y = ENTITY_ANCHOR_Y;
+      if (r.stageTime >= d) {
+        player.mesh.position.set(r.inside.x, ENTITY_ANCHOR_Y, r.inside.z);
+        player.gx = ELEVATOR_GRID_GX;
+        player.gz = ELEVATOR_GRID_GZ;
+        r.stage = 'doorsClose';
+        r.stageTime = 0;
+      }
+      break;
+    }
+    case 'doorsClose': {
+      const d = 0.36;
+      const k = Math.min(1, r.stageTime / d);
+      const e = easeOut(k);
+      const openL = r.doorLClosedX - r.doorOpenAmt;
+      const openR = r.doorRClosedX + r.doorOpenAmt;
+      r.doorL.position.x = openL + e * (r.doorLClosedX - openL);
+      r.doorR.position.x = openR - e * (openR - r.doorRClosedX);
+      if (r.stageTime >= d) {
+        r.liftGroup.attach(player.mesh);
+        r.stage = 'rise';
+        r.stageTime = 0;
+      }
+      break;
+    }
+    case 'rise': {
+      const riseDur = 3.05;
+      const k = Math.min(1, r.stageTime / riseDur);
+      const e = easeOut(k);
+      const riseAm = 7.25;
+      r.liftGroup.position.y = e * riseAm;
+      if (r.stageTime >= riseDur) {
+        r.stage = 'fadeEnd';
+        r.stageTime = 0;
+      }
+      break;
+    }
+    case 'fadeEnd': {
+      const fd = 1.02;
+      setElevatorFadeOpacity(Math.min(1, r.stageTime / fd));
+      if (r.stageTime >= fd) {
+        finishElevatorTransition();
+      }
+      break;
+    }
+    default:
+      break;
+  }
+}
+
+function finishElevatorTransition() {
+  elevatorRun = null;
+  setElevatorFadeOpacity(0);
+  if (player?.mesh && elevatorStationState?.liftGroup) {
+    scene.attach(player.mesh);
+  }
+  disposeElevatorStation();
+  loadLevelFromIndex(currentLevelIndex + 1);
 }
 
 function showNarrativeOverlay(title, body, hint) {
@@ -164,8 +340,7 @@ function showNarrativeOverlay(title, body, hint) {
 function continueToNextLevel() {
   if (phase !== Phase.LEVEL_CLEAR) return;
   hideNarrativeOverlay();
-  currentLevelIndex++;
-  loadLevelFromIndex(currentLevelIndex);
+  loadLevelFromIndex(currentLevelIndex + 1);
 }
 
 async function dismissIntro() {
@@ -187,7 +362,6 @@ function continueFromDefeat() {
 function continueFromVictory() {
   if (phase !== Phase.GAME_OVER) return;
   hideNarrativeOverlay();
-  currentLevelIndex = 0;
   loadLevelFromIndex(0);
 }
 
@@ -231,7 +405,8 @@ function maybeWin() {
     phase === Phase.GAME_OVER ||
     phase === Phase.INTRO ||
     phase === Phase.DEFEAT ||
-    phase === Phase.PAUSE
+    phase === Phase.PAUSE ||
+    phase === Phase.ELEVATOR
   ) {
     return;
   }
@@ -252,10 +427,21 @@ function maybeWin() {
     return;
   }
 
+  playSectorClear();
+
+  if (currentLevelIndex === ELEVATOR_TRANSITION_LEVEL_INDEX) {
+    console.log('[progreso] Ascensor: planta expedientes → piso 2');
+    phase = Phase.ELEVATOR;
+    busy = true;
+    hideNarrativeOverlay();
+    startElevatorCutscene();
+    updateHud();
+    return;
+  }
+
   console.log(`[progreso] Nivel ${currentLevelIndex + 1} completado`);
   phase = Phase.LEVEL_CLEAR;
   busy = true;
-  playSectorClear();
   updateHud();
   const doneName = SECTOR_NAMES[currentLevelIndex] ?? `Sector ${currentLevelIndex + 1}`;
   const nextName = SECTOR_NAMES[currentLevelIndex + 1] ?? `Sector ${currentLevelIndex + 2}`;
@@ -267,6 +453,7 @@ function maybeWin() {
 }
 
 function loadLevelFromIndex(idx) {
+  currentLevelIndex = idx;
   hideNarrativeOverlay();
   hidePauseOverlay();
   const ok = loadLevel(idx, {
@@ -304,6 +491,7 @@ function clearAllEnemies() {
 }
 
 function clearLevelEntities() {
+  disposeElevatorStation();
   clearWallMeshes();
   clearAllEnemies();
   clearWallMask();
@@ -315,17 +503,23 @@ function clearLevelEntities() {
 
 function applyLevelLayout(layout) {
   clearWallMask();
-  if (layout.wallPositions.length > 0) {
-    setWallMask(buildWallMaskFromPositions(layout.wallPositions));
-    for (const { gx, gz } of layout.wallPositions) {
-      const mesh = new THREE.Mesh(wallSharedGeom, wallSharedMat);
-      const p = gridToWorld(gx, gz);
-      mesh.position.set(p.x, 0.42, p.z);
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
-      scene.add(mesh);
-      wallMeshes.push(mesh);
-    }
+  const mask = buildWallMaskFromPositions(layout.wallPositions);
+  if (currentLevelIndex === ELEVATOR_TRANSITION_LEVEL_INDEX) {
+    mask[ELEVATOR_GRID_GZ * GRID_SIZE + ELEVATOR_GRID_GX] = 1;
+  }
+  setWallMask(mask);
+  for (const { gx, gz } of layout.wallPositions) {
+    const mesh = new THREE.Mesh(wallSharedGeom, wallSharedMat);
+    const p = gridToWorld(gx, gz);
+    mesh.position.set(p.x, 0.42, p.z);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    scene.add(mesh);
+    wallMeshes.push(mesh);
+  }
+  if (currentLevelIndex === ELEVATOR_TRANSITION_LEVEL_INDEX) {
+    elevatorStationState = buildElevatorStation(gridToWorld, ELEVATOR_GRID_GX, ELEVATOR_GRID_GZ);
+    scene.add(elevatorStationState.liftGroup);
   }
   for (const spec of layout.enemies) {
     const t = spec.type === 'chaser' ? EnemyType.CHASER : EnemyType.STATIC;
@@ -439,6 +633,11 @@ function clearShiftPreview() {
 
 function updateAimVisuals() {
   if (!player) return;
+
+  if (phase === Phase.ELEVATOR) {
+    clearShiftPreview();
+    return;
+  }
 
   if (phase === Phase.PAUSE) {
     clearShiftPreview();
@@ -737,6 +936,11 @@ function onKeyDown(ev) {
     return;
   }
 
+  if (phase === Phase.ELEVATOR) {
+    ev.preventDefault();
+    return;
+  }
+
   if (phase === Phase.LEVEL_CLEAR) {
     if (ev.code === 'Enter' || ev.code === 'Space') {
       ev.preventDefault();
@@ -981,7 +1185,9 @@ function animate(now) {
   requestAnimationFrame(animate);
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
-  if (!isWorldFrozen()) {
+  if (phase === Phase.ELEVATOR) {
+    updateElevatorCutscene(dt);
+  } else if (!isWorldFrozen()) {
     tickAnimations(dt);
     shockwave?.update(dt);
   }
@@ -997,8 +1203,7 @@ if (import.meta.env.DEV) {
       levelCount: LEVEL_COUNT,
       getPhaseLabel: () => phase,
       goToLevel: (idx) => {
-        currentLevelIndex = Math.max(0, Math.min(LEVEL_COUNT - 1, idx));
-        loadLevelFromIndex(currentLevelIndex);
+        loadLevelFromIndex(Math.max(0, Math.min(LEVEL_COUNT - 1, idx)));
       },
       restartLevel: restartCurrentLevel,
     });

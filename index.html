@@ -146,6 +146,15 @@
         font-size: 0.76rem;
         font-family: inherit;
       }
+      #elevator-fade {
+        position: fixed;
+        inset: 0;
+        z-index: 14;
+        pointer-events: none;
+        background: #080a0e;
+        opacity: 0;
+        transition: opacity 0.05s linear;
+      }
     </style>
   </head>
   <body>
@@ -169,6 +178,7 @@
         <p class="hint" id="narrative-hint"></p>
       </div>
     </div>
+    <div id="elevator-fade" aria-hidden="true"></div>
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>

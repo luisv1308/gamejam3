@@ -2,6 +2,9 @@
  * Cada nivel: GRID_SIZE filas de strings de GRID_SIZE caracteres.
  * gz=0 es la primera fila del array.
  *
+ * Lore (ver docs/telequinesis-identidad.md): los expedientes críticos están en la planta del nivel 3 (pantalla 3); al neutralizarlo, K-27 usa el ascensor de servicio
+ * para acceder al piso 2 (nivel 4) mediante ascensor de servicio.
+ *
  * Leyenda:
  *   P = jugador (exactamente uno)
  *   E = enemigo chaser
@@ -33,7 +36,7 @@ export const LEVELS = [
     '........',
     '........',
   ],
-  // Nivel 3 — E arriba, flancos y E abajo-derecha
+  // Nivel 3 — expedientes; ascensor fijo en (7,0) NE; al ganar: cutscene → piso 2
   [
     '........',
     '...E....',
@@ -42,6 +45,17 @@ export const LEVELS = [
     '......E.',
     '........',
     '........',
+    '........',
+  ],
+  // Nivel 4 — planta 2 / mundo 2 (tras ascensor)
+  [
+    '........',
+    '........',
+    '..E.E...',
+    '...W....',
+    '...P....',
+    '...W....',
+    '..e.E...',
     '........',
   ],
 ];

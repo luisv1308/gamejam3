@@ -193,6 +193,35 @@ export function playEnemyDeath() {
   osc.stop(t + 0.18);
 }
 
+/** Pulsador / llamada de cabina (ascensor). */
+export function playElevatorButton() {
+  const c = ctx();
+  if (!c) return;
+  const t = c.currentTime;
+  const osc = c.createOscillator();
+  osc.type = 'square';
+  osc.frequency.setValueAtTime(420, t);
+  osc.frequency.exponentialRampToValueAtTime(180, t + 0.06);
+  const f = c.createBiquadFilter();
+  f.type = 'lowpass';
+  f.frequency.value = 1200;
+  const g = outGain(c, t, 0.09, 0.002, 0.02, 0.05);
+  osc.connect(f);
+  f.connect(g);
+  g.connect(c.destination);
+  osc.start(t);
+  osc.stop(t + 0.09);
+
+  const click = c.createOscillator();
+  click.type = 'sine';
+  click.frequency.value = 880;
+  const cg = outGain(c, t + 0.04, 0.04, 0.001, 0.008, 0.04);
+  click.connect(cg);
+  cg.connect(c.destination);
+  click.start(t + 0.04);
+  click.stop(t + 0.09);
+}
+
 export function playSectorClear() {
   const c = ctx();
   if (!c) return;

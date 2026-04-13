@@ -9,6 +9,8 @@ export const Phase = {
   ENEMY: 'enemy',
   /** Nivel limpio: UI de victoria, juego pausado hasta confirmar. */
   LEVEL_CLEAR: 'level_clear',
+  /** Ascensor entre plantas (solo tras ciertos niveles); animación automática. */
+  ELEVATOR: 'elevator',
   /** Campaña completada (último sector); pantalla final. */
   GAME_OVER: 'game_over',
   /** Interceptado por seguridad; reintento desde el mismo sector. */
