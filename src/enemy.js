@@ -1,34 +1,72 @@
 import * as THREE from 'three';
 import { gridToWorld } from './grid.js';
+import { MilitaryTheme as T } from './visuals/militaryTheme.js';
 
 export const EnemyType = {
   CHASER: 'chaser',
   STATIC: 'static',
 };
 
+/** Unidad de seguridad low-poly: cuerpo + “sensor” superior. */
 export function createEnemyMesh(type) {
-  const geom = new THREE.BoxGeometry(0.55, 0.7, 0.55);
-  let color = 0xc94c4c;
-  if (type === EnemyType.STATIC) color = 0xd9822b;
-  const mat = new THREE.MeshStandardMaterial({
-    color,
-    roughness: 0.45,
-    metalness: 0.1,
+  const group = new THREE.Group();
+
+  const isStatic = type === EnemyType.STATIC;
+  const bodyColor = isStatic ? T.enemyStatic : T.enemyChaser;
+  const accent = isStatic ? T.enemyStaticDark : T.enemyChaserDark;
+
+  const bodyMat = new THREE.MeshStandardMaterial({
+    color: bodyColor,
+    roughness: 0.48,
+    metalness: 0.28,
     emissive: new THREE.Color(0x000000),
     emissiveIntensity: 0,
   });
-  const mesh = new THREE.Mesh(geom, mat);
-  mesh.castShadow = true;
-  mesh.receiveShadow = true;
-  return mesh;
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.48, 0.52), bodyMat);
+  body.position.y = -0.06;
+  body.castShadow = true;
+  body.receiveShadow = true;
+  group.add(body);
+
+  const headMat = new THREE.MeshStandardMaterial({
+    color: accent,
+    roughness: 0.4,
+    metalness: 0.35,
+    emissive: new THREE.Color(0x000000),
+    emissiveIntensity: 0,
+  });
+  const head = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.2, 0.22, 8), headMat);
+  head.position.y = 0.28;
+  head.castShadow = true;
+  head.receiveShadow = true;
+  group.add(head);
+
+  /** Mismo material que el cuerpo: el juego colorea/emite sobre `mesh.material`. */
+  group.userData.bodyMaterial = bodyMat;
+  group.userData.headMaterial = headMat;
+
+  return group;
 }
 
 /**
  * One enemy instance: grid position + Three mesh + type.
  */
+export function disposeEnemy(enemy, scene) {
+  if (!enemy?.mesh) return;
+  scene.remove(enemy.mesh);
+  enemy.mesh.traverse((o) => {
+    if (o instanceof THREE.Mesh) {
+      o.geometry?.dispose();
+      const m = o.material;
+      if (Array.isArray(m)) m.forEach((x) => x.dispose());
+      else m?.dispose();
+    }
+  });
+}
+
 export function makeEnemy(type, gx, gz, scene) {
-  let baseColor = 0xc94c4c;
-  if (type === EnemyType.STATIC) baseColor = 0xd9822b;
+  const baseColor =
+    type === EnemyType.STATIC ? T.enemyStatic : T.enemyChaser;
   const mesh = createEnemyMesh(type);
   const pos = gridToWorld(gx, gz);
   mesh.position.set(pos.x, pos.y, pos.z);
@@ -38,6 +76,8 @@ export function makeEnemy(type, gx, gz, scene) {
     gx,
     gz,
     mesh,
+    /** Material principal para highlights de aim/shift (cuerpo). */
+    mainMaterial: mesh.userData.bodyMaterial,
     baseColor,
     pendingRemove: false,
     animFrom: null,

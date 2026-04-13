@@ -11,7 +11,7 @@ import {
 } from './grid.js';
 import { createPlayer, setFacingFromMove, setPlayerAim, disposePlayer } from './player.js';
 import { loadLevel, buildWallMaskFromPositions, LEVEL_COUNT } from './systems/levelLoader.js';
-import { makeEnemy, EnemyType } from './enemy.js';
+import { makeEnemy, EnemyType, disposeEnemy } from './enemy.js';
 import {
   resolveShift,
   planEnemyTurn,
@@ -19,6 +19,7 @@ import {
   Phase,
 } from './turnManager.js';
 import { Shockwave } from './effects/shockwave.js';
+import { MilitaryTheme as Theme } from './visuals/militaryTheme.js';
 import {
   resumeAudio,
   startAmbient,
@@ -229,11 +230,7 @@ function clearWallMeshes() {
 
 function clearAllEnemies() {
   for (const e of enemies) {
-    if (e.mesh) {
-      scene.remove(e.mesh);
-      e.mesh.geometry.dispose();
-      e.mesh.material.dispose();
-    }
+    disposeEnemy(e, scene);
   }
   enemies.length = 0;
 }
@@ -349,9 +346,10 @@ function clearShiftPreview() {
   hideRangeTileHighlights();
   for (const e of enemies) {
     if (e.pendingRemove) continue;
-    e.mesh.material.color.setHex(e.baseColor);
-    e.mesh.material.emissive.setHex(0x000000);
-    e.mesh.material.emissiveIntensity = 0;
+    const mat = e.mainMaterial;
+    mat.color.setHex(e.baseColor);
+    mat.emissive.setHex(0x000000);
+    mat.emissiveIntensity = 0;
   }
 }
 
@@ -387,7 +385,7 @@ function updateAimVisuals() {
       mesh.material.color.setHex(0xffaa44);
       mesh.material.opacity = 0.52;
     } else {
-      mesh.material.color.setHex(0x3d9eff);
+      mesh.material.color.setHex(0x42c4e8);
       mesh.material.opacity = 0.36;
     }
     cx += ax;
@@ -424,13 +422,15 @@ function updateAimVisuals() {
   for (const e of enemies) {
     if (e.pendingRemove) continue;
     if (inLine.has(e)) {
-      e.mesh.material.color.setHex(0xffee99);
-      e.mesh.material.emissive.setHex(0x44ff99);
-      e.mesh.material.emissiveIntensity = 0.72;
+      const mat = e.mainMaterial;
+      mat.color.setHex(0xffee99);
+      mat.emissive.setHex(0x44ff99);
+      mat.emissiveIntensity = 0.72;
     } else {
-      e.mesh.material.color.setHex(e.baseColor);
-      e.mesh.material.emissive.setHex(0x000000);
-      e.mesh.material.emissiveIntensity = 0;
+      const mat = e.mainMaterial;
+      mat.color.setHex(e.baseColor);
+      mat.emissive.setHex(0x000000);
+      mat.emissiveIntensity = 0;
     }
   }
 }
@@ -588,14 +588,12 @@ function updateDestroyAnimations(dt) {
     if (!e.pendingRemove) continue;
     e.destroyAnim -= dt * 1.8;
     const k = Math.max(0, e.destroyAnim);
-    e.mesh.material.emissive.setHex(0xff4444);
-    e.mesh.material.emissiveIntensity = 0.6 * k;
+    e.mainMaterial.emissive.setHex(0xff4444);
+    e.mainMaterial.emissiveIntensity = 0.6 * k;
     const sc = 0.2 + 0.8 * k;
     e.mesh.scale.set(sc, sc, sc);
     if (k <= 0.01) {
-      scene.remove(e.mesh);
-      e.mesh.geometry.dispose();
-      e.mesh.material.dispose();
+      disposeEnemy(e, scene);
       enemies.splice(i, 1);
     }
   }
@@ -731,19 +729,36 @@ function onKeyDown(ev) {
   startPlayerMove(dx, dz);
 }
 
+function addFacilityBase() {
+  const padH = 0.16;
+  const span = GRID_SIZE * TILE_SIZE + 1.5;
+  const pad = new THREE.Mesh(
+    new THREE.BoxGeometry(span, padH, span),
+    new THREE.MeshStandardMaterial({
+      color: Theme.baseColor,
+      roughness: Theme.baseRoughness,
+      metalness: 0.04,
+    })
+  );
+  pad.position.y = -padH / 2 - 0.01;
+  pad.receiveShadow = true;
+  scene.add(pad);
+}
+
 function buildGrid() {
   for (let gz = 0; gz < GRID_SIZE; gz++) {
     for (let gx = 0; gx < GRID_SIZE; gx++) {
       const geom = new THREE.PlaneGeometry(TILE_SIZE * 0.96, TILE_SIZE * 0.96);
       const mat = new THREE.MeshStandardMaterial({
-        color: (gx + gz) % 2 === 0 ? 0x2f3642 : 0x252b34,
+        color: (gx + gz) % 2 === 0 ? Theme.floorA : Theme.floorB,
         side: THREE.DoubleSide,
-        roughness: 0.85,
+        roughness: 0.78,
+        metalness: 0.06,
       });
       const mesh = new THREE.Mesh(geom, mat);
       mesh.rotation.x = -Math.PI / 2;
       const p = gridToWorld(gx, gz);
-      mesh.position.set(p.x, 0, p.z);
+      mesh.position.set(p.x, 0.002, p.z);
       mesh.receiveShadow = true;
       scene.add(mesh);
     }
@@ -752,7 +767,8 @@ function buildGrid() {
 
 function setupScene() {
   scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x1a1d24);
+  scene.background = new THREE.Color(Theme.sceneBackground);
+  scene.fog = new THREE.Fog(Theme.fogColor, Theme.fogNear, Theme.fogFar);
 
   const aspect = window.innerWidth / window.innerHeight;
   const frustumSize = 11;
@@ -768,12 +784,21 @@ function setupScene() {
   camera.lookAt(0, 0, 0);
   cameraRest = new THREE.Vector3().copy(camera.position);
 
-  const amb = new THREE.AmbientLight(0xffffff, 0.45);
+  const amb = new THREE.AmbientLight(Theme.ambientLightColor, Theme.ambientIntensity);
   scene.add(amb);
-  const dir = new THREE.DirectionalLight(0xffffff, 0.85);
-  dir.position.set(8, 20, 10);
+  const hemi = new THREE.HemisphereLight(
+    Theme.hemisphereSky,
+    Theme.hemisphereGround,
+    Theme.hemisphereIntensity
+  );
+  hemi.position.set(0, 20, 0);
+  scene.add(hemi);
+
+  const dir = new THREE.DirectionalLight(Theme.keyLightColor, Theme.keyLightIntensity);
+  dir.position.set(...Theme.keyLightPosition);
   dir.castShadow = true;
-  dir.shadow.mapSize.set(1024, 1024);
+  dir.shadow.mapSize.set(2048, 2048);
+  dir.shadow.bias = -0.00025;
   dir.shadow.camera.near = 0.5;
   dir.shadow.camera.far = 50;
   dir.shadow.camera.left = -12;
@@ -782,32 +807,45 @@ function setupScene() {
   dir.shadow.camera.bottom = -12;
   scene.add(dir);
 
+  const fill = new THREE.DirectionalLight(Theme.fillLightColor, Theme.fillLightIntensity);
+  fill.position.set(...Theme.fillLightPosition);
+  scene.add(fill);
+
+  const accent = new THREE.PointLight(Theme.accentLightColor, Theme.accentLightIntensity, 28, 2);
+  accent.position.set(...Theme.accentLightPosition);
+  scene.add(accent);
+
   renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.08;
   document.body.appendChild(renderer.domElement);
 
   shockwave = new Shockwave(scene);
 
+  addFacilityBase();
   buildGrid();
 
   wallSharedGeom = new THREE.BoxGeometry(0.92, 0.85, 0.92);
   wallSharedMat = new THREE.MeshStandardMaterial({
-    color: 0x3d4452,
-    roughness: 0.92,
-    metalness: 0.05,
+    color: Theme.wallColor,
+    roughness: Theme.wallRoughness,
+    metalness: Theme.wallMetalness,
   });
 
   const aimGeom = new THREE.BoxGeometry(0.18, 0.06, 0.9);
-  const aimMat = new THREE.MeshBasicMaterial({ color: 0xffff00 });
+  const aimMat = new THREE.MeshBasicMaterial({ color: 0x5cffd9 });
   aimIndicator = new THREE.Mesh(aimGeom, aimMat);
   scene.add(aimIndicator);
 
   const lineMat = new THREE.LineBasicMaterial({
-    color: 0x66ffcc,
+    color: 0x7dffe8,
     transparent: true,
-    opacity: 0.9,
+    opacity: 0.88,
   });
   shiftPreviewLine = new THREE.Line(
     new THREE.BufferGeometry().setFromPoints([
@@ -822,9 +860,9 @@ function setupScene() {
   rangeTileMeshes = [];
   for (let i = 0; i < SHIFT_MAX_RANGE; i++) {
     const mat = new THREE.MeshBasicMaterial({
-      color: 0x3d9eff,
+      color: 0x4ad4f0,
       transparent: true,
-      opacity: 0.36,
+      opacity: 0.34,
       depthWrite: false,
       side: THREE.DoubleSide,
     });
