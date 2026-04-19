@@ -1,5 +1,5 @@
 import { GRID_SIZE } from '../constants.js';
-import { LEVELS, LEVEL_COUNT } from '../levels/levels.js';
+import { LEVEL_DEFS, LEVEL_COUNT, LEVELS } from '../levels/levels.js';
 
 function assertLevelShape(rows) {
   if (rows.length !== GRID_SIZE) throw new Error(`expected ${GRID_SIZE} rows, got ${rows.length}`);
@@ -21,8 +21,7 @@ export function buildWallMaskFromPositions(wallPositions) {
 }
 
 /**
- * Devuelve layout de un nivel o null si falla.
- * @returns {{ playerGx: number, playerGz: number, wallPositions: {gx:number,gz:number}[], enemies: { type: string, gx: number, gz: number }[] } | null}
+ * @returns {{ playerGx: number, playerGz: number, wallPositions: {gx:number,gz:number}[], enemies: { type: string, gx: number, gz: number }[], exit: {gx:number,gz:number}|null, terminal: {gx:number,gz:number}|null, keyCell: {gx:number,gz:number}|null }}
  */
 export function parseLevelLayout(rows) {
   if (!rows) return null;
@@ -33,6 +32,12 @@ export function parseLevelLayout(rows) {
   let playerGx = -1;
   let playerGz = -1;
   let playerCount = 0;
+  /** @type {{gx:number,gz:number}|null} */
+  let exit = null;
+  /** @type {{gx:number,gz:number}|null} */
+  let terminal = null;
+  /** @type {{gx:number,gz:number}|null} */
+  let keyCell = null;
 
   for (let gz = 0; gz < GRID_SIZE; gz++) {
     const row = rows[gz];
@@ -53,6 +58,27 @@ export function parseLevelLayout(rows) {
         case 'e':
           enemies.push({ type: 'static', gx, gz });
           break;
+        case 'p':
+          enemies.push({ type: 'patrol', gx, gz });
+          break;
+        case 'R':
+          enemies.push({ type: 'heavy', gx, gz });
+          break;
+        case 'M':
+          enemies.push({ type: 'boss', gx, gz });
+          break;
+        case 'X':
+          if (exit) console.warn('[levelLoader] múltiples X; se usa la primera');
+          else exit = { gx, gz };
+          break;
+        case 'H':
+          if (terminal) console.warn('[levelLoader] múltiples H; se usa la primera');
+          else terminal = { gx, gz };
+          break;
+        case 'K':
+          if (keyCell) console.warn('[levelLoader] múltiples K; se usa la primera');
+          else keyCell = { gx, gz };
+          break;
         case '.':
           break;
         default:
@@ -71,26 +97,35 @@ export function parseLevelLayout(rows) {
     playerGz,
     wallPositions,
     enemies,
+    exit,
+    terminal,
+    keyCell,
   };
 }
 
 /**
  * Carga un nivel por índice y aplica al juego mediante callbacks.
- * @param {{ onBeforeLoad?: () => void, applyLayout: (layout: ReturnType<typeof parseLevelLayout>) => void }} api
+ * @param {{ onBeforeLoad?: () => void, applyLayout: (layout: object) => void }} api
  */
 export function loadLevel(index, api) {
   if (index < 0 || index >= LEVEL_COUNT) {
     console.warn('[levelLoader] índice fuera de rango:', index);
     return false;
   }
-  const rows = LEVELS[index];
-  const layout = parseLevelLayout(rows);
+  const def = LEVEL_DEFS[index];
+  const layout = parseLevelLayout(def.rows);
   if (!layout) return false;
 
+  const fullLayout = {
+    ...layout,
+    objective: def.objective,
+    meta: def.meta ?? {},
+  };
+
   api.onBeforeLoad?.();
-  api.applyLayout(layout);
+  api.applyLayout(fullLayout);
   console.log(`[level] Cargado nivel ${index + 1}/${LEVEL_COUNT}`);
   return true;
 }
 
-export { LEVEL_COUNT, LEVELS };
+export { LEVEL_DEFS, LEVEL_COUNT, LEVELS };

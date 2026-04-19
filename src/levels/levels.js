@@ -1,63 +1,149 @@
+import { ObjectiveType } from '../systems/objectives.js';
+
 /**
- * Cada nivel: GRID_SIZE filas de strings de GRID_SIZE caracteres.
- * gz=0 es la primera fila del array.
- *
- * Lore (ver docs/telequinesis-identidad.md): los expedientes críticos están en la planta del nivel 3 (pantalla 3); al neutralizarlo, K-27 usa el ascensor de servicio
- * para acceder al piso 2 (nivel 4) mediante ascensor de servicio.
+ * Cada nivel: `rows` = GRID_SIZE filas de strings de GRID_SIZE caracteres.
+ * gz=0 es la primera fila del array (norte).
+ * Lore y ascensores: docs/telequinesis-identidad.md.
  *
  * Leyenda:
  *   P = jugador (exactamente uno)
- *   E = enemigo chaser
- *   e = enemigo estático
- *   W = muro (bloquea movimiento y línea de shift)
+ *   W = muro
+ *   E = perseguidor
+ *   e = centinela (quieto hasta que el shift lo desplaza; luego persigue)
+ *   p = patrullero (rebota en muros)
+ *   R = pesado (empuje corto)
+ *   M = jefe (HP elevado; ver constants.BOSS_HP)
+ *   X = salida (reach_exit / extract)
+ *   H = terminal (hack_terminal)
+ *   K = datachip / llave (extract)
  *   . = vacío
  */
 
-export const LEVELS = [
-  // Nivel 1 — intro: espacio abierto, pocos enemigos
-  [
-    '........',
-    '........',
-    '..E..E..',
-    '........',
-    '........',
-    '...P....',
-    '........',
-    '........',
-  ],
-  // Nivel 2 — muro, E arriba, E y P abajo
-  [
-    '........',
-    '..WWW...',
-    '...E....',
-    '........',
-    '..E.P...',
-    '........',
-    '........',
-    '........',
-  ],
-  // Nivel 3 — expedientes; ascensor fijo en (7,0) NE; al ganar: cutscene → piso 2
-  [
-    '........',
-    '...E....',
-    '........',
-    '..E.P...',
-    '......E.',
-    '........',
-    '........',
-    '........',
-  ],
-  // Nivel 4 — planta 2 / mundo 2 (tras ascensor)
-  [
-    '........',
-    '........',
-    '..E.E...',
-    '...W....',
-    '...P....',
-    '...W....',
-    '..e.E...',
-    '........',
-  ],
+/** @typedef {{ rows: string[], objective: string, meta?: Record<string, unknown> }} LevelDef */
+
+/** @type {LevelDef[]} */
+export const LEVEL_DEFS = [
+  {
+    objective: ObjectiveType.ELIMINATE_ALL,
+    rows: [
+      '........',
+      '........',
+      '..E.....',
+      '........',
+      '...P....',
+      '........',
+      '........',
+      '........',
+    ],
+  },
+  {
+    objective: ObjectiveType.ELIMINATE_ALL,
+    rows: [
+      '........',
+      '........',
+      '....E...',
+      '...W....',
+      '........',
+      '...P....',
+      '........',
+      '........',
+    ],
+  },
+  {
+    objective: ObjectiveType.ELIMINATE_ALL,
+    rows: [
+      '........',
+      '...E....',
+      '..EW....',
+      '........',
+      '..EP....',
+      '........',
+      '........',
+      '........',
+    ],
+  },
+  {
+    objective: ObjectiveType.REACH_EXIT,
+    rows: [
+      '.......X',
+      '........',
+      '..E.....',
+      '........',
+      '...P....',
+      '........',
+      '........',
+      '........',
+    ],
+  },
+  {
+    objective: ObjectiveType.HACK_TERMINAL,
+    rows: [
+      '........',
+      '....E...',
+      '...H....',
+      '..P.....',
+      '....p...',
+      '........',
+      '........',
+      '........',
+    ],
+  },
+  {
+    objective: ObjectiveType.EXTRACT,
+    rows: [
+      '.......X',
+      '........',
+      '...E....',
+      '....K...',
+      '...P....',
+      '..E.....',
+      '........',
+      '........',
+    ],
+  },
+  {
+    objective: ObjectiveType.ELIMINATE_ALL,
+    rows: [
+      '........',
+      '..R.E...',
+      '...W.W..',
+      '........',
+      '...P....',
+      '...W....',
+      '..E.....',
+      '........',
+    ],
+  },
+  {
+    objective: ObjectiveType.ELIMINATE_ALL,
+    rows: [
+      '........',
+      '.p...E..',
+      '...W....',
+      '........',
+      '...P....',
+      '...W....',
+      '.E...p..',
+      '........',
+    ],
+  },
+  {
+    objective: ObjectiveType.ELIMINATE_ALL,
+    meta: { isBossFloor: true },
+    rows: [
+      '........',
+      '...e.e..',
+      '..WWMWW.',
+      '...eMe..',
+      '..W.W.W.',
+      '...P....',
+      '........',
+      '........',
+    ],
+  },
 ];
 
-export const LEVEL_COUNT = LEVELS.length;
+export const LEVEL_COUNT = LEVEL_DEFS.length;
+
+/** Compat: solo matrices de filas (p. ej. tests o herramientas). */
+export const LEVELS = LEVEL_DEFS.map((d) => d.rows);

@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>K-27 «Vector» — infiltración telequinética</title>
+    <title>K-27 «Vector» — ascenso corporativo</title>
     <style>
       * { margin: 0; box-sizing: border-box; }
       html, body { overflow: hidden; height: 100%; background: #1a1e26; }
@@ -104,6 +104,22 @@
       #hud-phase:empty {
         display: none;
       }
+      #hud-legend {
+        margin-top: 0.45rem;
+        padding-top: 0.45rem;
+        border-top: 1px solid rgba(154, 168, 188, 0.22);
+        font-size: 0.68rem;
+        font-weight: 400;
+        letter-spacing: 0.01em;
+        text-transform: none;
+        color: #b4c0d4;
+        line-height: 1.35;
+        text-align: right;
+        max-width: 19rem;
+      }
+      #hud-legend:empty {
+        display: none;
+      }
       #pause-overlay {
         position: fixed;
         inset: 0;
@@ -163,6 +179,7 @@
         <div id="hud-sector"></div>
         <div id="hud-progress"></div>
         <div id="hud-phase" aria-live="polite"></div>
+        <div id="hud-legend" aria-live="polite"></div>
       </div>
     </div>
     <div id="pause-overlay" aria-hidden="true">
