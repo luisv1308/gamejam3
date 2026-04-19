@@ -5,7 +5,7 @@ import {
   PLAYER_SPEED,
   ENEMY_SPEED,
   SHIFT_MAX_RANGE,
-  ELEVATOR_TRANSITION_LEVEL_INDEX,
+  ELEVATOR_TRANSITION_LEVEL_INDICES,
   ELEVATOR_GRID_GX,
   ELEVATOR_GRID_GZ,
 } from './constants.js';
@@ -22,13 +22,17 @@ import {
 } from './grid.js';
 import { createPlayer, setFacingFromMove, setPlayerAim, disposePlayer } from './player.js';
 import { loadLevel, buildWallMaskFromPositions, LEVEL_COUNT } from './systems/levelLoader.js';
-import { makeEnemy, EnemyType, disposeEnemy } from './enemy.js';
 import {
-  resolveShift,
-  planEnemyTurn,
-  countLivingEnemies,
-  Phase,
-} from './turnManager.js';
+  createLevelRuntimeState,
+  isObjectiveMet,
+  updateHackProgressAfterEnemyPhase,
+  tryPickKeyCell,
+  ObjectiveType,
+  objectiveHudLabel,
+  fullFloorLegend,
+} from './systems/objectives.js';
+import { makeEnemy, EnemyType, disposeEnemy, applyStaticAggravatedVisual } from './enemy.js';
+import { resolveShift, planEnemyTurn, Phase } from './turnManager.js';
 import { Shockwave } from './effects/shockwave.js';
 import { buildElevatorStation } from './effects/elevatorStation.js';
 import { MilitaryTheme as Theme } from './visuals/militaryTheme.js';
@@ -46,19 +50,24 @@ import {
   playVictory,
 } from './audio/gameAudio.js';
 
-/** Nombres de sector para copy narrativo (alineado con LEVEL_COUNT). */
+/** Nombres de planta / sector (alineado con LEVEL_COUNT). */
 const SECTOR_NAMES = [
-  'Sector 01 — Archivo de sujetos',
-  'Sector 02 — Contención',
-  'Sector 03 — Núcleo de datos (expedientes)',
-  'Planta 2 — Acceso restringido',
+  'Planta B1 — perímetro corporativo',
+  'Planta 3 — control de accesos',
+  'Planta 8 — pasillo térmico (ascensor)',
+  'Planta 12 — archivo intermedio',
+  'Planta 18 — sala de terminales',
+  'Planta 24 — bóveda de credenciales (ascensor)',
+  'Planta 32 — seguridad reforzada',
+  'Planta 40 — bloqueo de patrullas',
+  'Cúspide — penthouse del director',
 ];
 
 const INTRO_TITLE = 'K-27 «Vector»';
 const INTRO_BODY =
-  'Telekinesis táctica. Objetivo: infiltrar la instalación y borrar los expedientes que convierten a las personas en activos del programa. La seguridad reconoce tu firma psíquica.';
+  'Espionaje corporativo y telequinesis táctica. Debes ascender hasta la cúspide del rascacielos, robar el paquete de inteligencia y salir antes de que la seguridad cierre el perímetro. Cada planta te acerca al núcleo de datos.';
 const INTRO_HINT =
-  'WASD mover · Flechas apuntar · Espacio telequinesis (shift) · Esc pausa · Enter o clic para comenzar';
+  'WASD mover · Q pasar turno · Flechas apuntar · Espacio telequinesis (shift) · Esc pausa · Enter o clic para comenzar. Las casillas tenues delante de ti son el alcance del shift; los círculos de color solo marcan salida/terminal/chip en ciertos niveles (lee el texto bajo el HUD).';
 
 // ——— Game state ———
 let scene;
@@ -90,20 +99,34 @@ let elevatorRun = null;
 /** Cabina en escena durante el nivel 3; null en otros niveles. */
 let elevatorStationState = null;
 
+/** Layout del nivel activo (incluye objective, exit, terminal, keyCell). */
+let currentLevelLayout = null;
+let levelRuntimeState = createLevelRuntimeState();
+/** Marcadores de suelo para salida / terminal / chip (dispose al cambiar nivel). */
+let objectiveMarkerMeshes = [];
+
 function updateHud() {
   const sectorEl = document.getElementById('hud-sector');
   const progressEl = document.getElementById('hud-progress');
   const phaseEl = document.getElementById('hud-phase');
+  const legendEl = document.getElementById('hud-legend');
   if (!sectorEl || !progressEl) return;
 
   const i = currentLevelIndex;
   sectorEl.textContent = SECTOR_NAMES[i] ?? `Sector ${String(i + 1).padStart(2, '0')}`;
-  progressEl.textContent = `Nivel ${i + 1} / ${LEVEL_COUNT}`;
+  const obj = currentLevelLayout?.objective ?? ObjectiveType.ELIMINATE_ALL;
+  progressEl.textContent = `Nivel ${i + 1} / ${LEVEL_COUNT} — ${objectiveHudLabel(obj)}`;
+  if (legendEl) {
+    legendEl.textContent =
+      phase === Phase.INTRO || phase === Phase.GAME_OVER || phase === Phase.DEFEAT
+        ? ''
+        : fullFloorLegend(obj, levelRuntimeState);
+  }
 
   if (phaseEl) {
     let line = '';
     if (phase === Phase.INTRO) line = 'Briefing';
-    else if (phase === Phase.LEVEL_CLEAR) line = 'Sector limpio — continúa';
+    else if (phase === Phase.LEVEL_CLEAR) line = 'Misión cumplida — continúa';
     else if (phase === Phase.ELEVATOR) line = 'Ascensor — transición de planta';
     else if (phase === Phase.DEFEAT) line = 'Protocolo activo — reintentar';
     else if (phase === Phase.GAME_OVER) line = 'Campaña completada';
@@ -369,8 +392,8 @@ function continueFromVictory() {
 function showDefeatNarrative(opts = {}) {
   if (!opts.fromShift) playDefeat();
   showNarrativeOverlay(
-    'Firma psíquica colapsada',
-    'Protocolo de contención te ha interceptado. Reinicio del sector.',
+    'Cobertura rota',
+    'Seguridad corporativa te ha cerrado el paso. Reinicia el sector y evita el contacto.',
     'Pulsa Enter, Espacio o clic para reintentar'
   );
   updateHud();
@@ -399,8 +422,10 @@ function enemyAt(gx, gz) {
   return null;
 }
 
-function maybeWin() {
+function tryObjectiveWin() {
   if (
+    !currentLevelLayout ||
+    !player ||
     phase === Phase.LEVEL_CLEAR ||
     phase === Phase.GAME_OVER ||
     phase === Phase.INTRO ||
@@ -410,17 +435,26 @@ function maybeWin() {
   ) {
     return;
   }
-  if (countLivingEnemies(enemies) !== 0) return;
-  if (enemies.length > 0) return;
+
+  if (
+    !isObjectiveMet({
+      layout: currentLevelLayout,
+      levelRuntime: levelRuntimeState,
+      player,
+      enemies,
+    })
+  ) {
+    return;
+  }
 
   if (currentLevelIndex >= LEVEL_COUNT - 1) {
     console.log('[progreso] Campaña completada');
     phase = Phase.GAME_OVER;
     busy = true;
     showNarrativeOverlay(
-      'Expedientes aniquilados',
-      'Los dossiers dejan de existir. Nadie vuelve a ser propiedad del programa.',
-      'Enter, Espacio o clic para reiniciar la campaña desde el Sector 01'
+      'Inteligencia en mano',
+      'Has alcanzado la cúspide y extraído el paquete. El edificio queda atrás; la corporación no sabe aún que ha perdido el control.',
+      'Enter, Espacio o clic para reiniciar la infiltración desde la planta B1'
     );
     playVictory();
     updateHud();
@@ -429,8 +463,8 @@ function maybeWin() {
 
   playSectorClear();
 
-  if (currentLevelIndex === ELEVATOR_TRANSITION_LEVEL_INDEX) {
-    console.log('[progreso] Ascensor: planta expedientes → piso 2');
+  if (ELEVATOR_TRANSITION_LEVEL_INDICES.includes(currentLevelIndex)) {
+    console.log('[progreso] Ascensor: ascenso de zona');
     phase = Phase.ELEVATOR;
     busy = true;
     hideNarrativeOverlay();
@@ -446,8 +480,8 @@ function maybeWin() {
   const doneName = SECTOR_NAMES[currentLevelIndex] ?? `Sector ${currentLevelIndex + 1}`;
   const nextName = SECTOR_NAMES[currentLevelIndex + 1] ?? `Sector ${currentLevelIndex + 2}`;
   showNarrativeOverlay(
-    'Sector neutralizado',
-    `${doneName} despejado. Ingresando: ${nextName}.`,
+    'Misión cumplida',
+    `${doneName} superada. Siguiente: ${nextName}.`,
     'Pulsa Enter, Espacio o clic para continuar'
   );
 }
@@ -490,11 +524,78 @@ function clearAllEnemies() {
   enemies.length = 0;
 }
 
+function clearObjectiveMarkers() {
+  for (const m of objectiveMarkerMeshes) {
+    scene.remove(m);
+    m.geometry?.dispose();
+    m.material?.dispose();
+  }
+  objectiveMarkerMeshes.length = 0;
+}
+
+function addObjectiveFloorMarker(gx, gz, color, opacity) {
+  const geom = new THREE.CircleGeometry(TILE_SIZE * 0.28, 24);
+  const mat = new THREE.MeshBasicMaterial({
+    color,
+    transparent: true,
+    opacity,
+    depthWrite: false,
+  });
+  const mesh = new THREE.Mesh(geom, mat);
+  mesh.rotation.x = -Math.PI / 2;
+  const p = gridToWorld(gx, gz);
+  mesh.position.set(p.x, 0.031, p.z);
+  mesh.renderOrder = 1;
+  scene.add(mesh);
+  objectiveMarkerMeshes.push(mesh);
+}
+
+function mapSpecTypeToEnemyType(specType) {
+  switch (specType) {
+    case 'static':
+      return EnemyType.STATIC;
+    case 'patrol':
+      return EnemyType.PATROL;
+    case 'heavy':
+      return EnemyType.HEAVY;
+    case 'boss':
+      return EnemyType.BOSS;
+    case 'chaser':
+    default:
+      return EnemyType.CHASER;
+  }
+}
+
+function trySpawnBossPhase2Adds() {
+  const boss = enemies.find((e) => e.isBoss && !e.pendingRemove);
+  if (!boss || boss.phase2Spawned || boss.hp !== 1) return;
+  boss.phase2Spawned = true;
+  const corners = [
+    [0, 7],
+    [7, 7],
+    [0, 0],
+    [7, 0],
+    [3, 0],
+    [4, 7],
+  ];
+  let spawned = 0;
+  for (const [gx, gz] of corners) {
+    if (spawned >= 2) break;
+    if (!isWalkable(gx, gz)) continue;
+    if (enemyAt(gx, gz)) continue;
+    if (player && player.gx === gx && player.gz === gz) continue;
+    enemies.push(makeEnemy(EnemyType.STATIC, gx, gz, scene));
+    spawned += 1;
+  }
+}
+
 function clearLevelEntities() {
   disposeElevatorStation();
   clearWallMeshes();
+  clearObjectiveMarkers();
   clearAllEnemies();
   clearWallMask();
+  currentLevelLayout = null;
   if (player) {
     disposePlayer(player, scene);
     player = null;
@@ -502,9 +603,12 @@ function clearLevelEntities() {
 }
 
 function applyLevelLayout(layout) {
+  currentLevelLayout = layout;
+  levelRuntimeState = createLevelRuntimeState();
+
   clearWallMask();
   const mask = buildWallMaskFromPositions(layout.wallPositions);
-  if (currentLevelIndex === ELEVATOR_TRANSITION_LEVEL_INDEX) {
+  if (ELEVATOR_TRANSITION_LEVEL_INDICES.includes(currentLevelIndex)) {
     mask[ELEVATOR_GRID_GZ * GRID_SIZE + ELEVATOR_GRID_GX] = 1;
   }
   setWallMask(mask);
@@ -517,15 +621,21 @@ function applyLevelLayout(layout) {
     scene.add(mesh);
     wallMeshes.push(mesh);
   }
-  if (currentLevelIndex === ELEVATOR_TRANSITION_LEVEL_INDEX) {
+  if (ELEVATOR_TRANSITION_LEVEL_INDICES.includes(currentLevelIndex)) {
     elevatorStationState = buildElevatorStation(gridToWorld, ELEVATOR_GRID_GX, ELEVATOR_GRID_GZ);
     scene.add(elevatorStationState.liftGroup);
   }
   for (const spec of layout.enemies) {
-    const t = spec.type === 'chaser' ? EnemyType.CHASER : EnemyType.STATIC;
+    const t = mapSpecTypeToEnemyType(spec.type);
     enemies.push(makeEnemy(t, spec.gx, spec.gz, scene));
   }
   player = createPlayer(scene, layout.playerGx, layout.playerGz);
+  tryPickKeyCell(layout, levelRuntimeState, player);
+
+  if (layout.exit) addObjectiveFloorMarker(layout.exit.gx, layout.exit.gz, 0x44ff88, 0.45);
+  if (layout.terminal) addObjectiveFloorMarker(layout.terminal.gx, layout.terminal.gz, 0x44ccff, 0.5);
+  if (layout.keyCell) addObjectiveFloorMarker(layout.keyCell.gx, layout.keyCell.gz, 0xffdd44, 0.5);
+
   for (const e of enemies) {
     const edx = player.gx - e.gx;
     const edz = player.gz - e.gz;
@@ -580,6 +690,14 @@ function finishEnemyPhase() {
   }
   phase = Phase.PLAYER;
   busy = false;
+  if (currentLevelLayout && player) {
+    updateHackProgressAfterEnemyPhase({
+      layout: currentLevelLayout,
+      levelRuntime: levelRuntimeState,
+      player,
+    });
+    tryObjectiveWin();
+  }
 }
 
 function onPlayerMoveComplete() {
@@ -592,6 +710,23 @@ function onPlayerMoveComplete() {
   ) {
     return;
   }
+  tryPickKeyCell(currentLevelLayout, levelRuntimeState, player);
+  updateHud();
+  tryObjectiveWin();
+  if (
+    phase === Phase.LEVEL_CLEAR ||
+    phase === Phase.GAME_OVER ||
+    phase === Phase.ELEVATOR
+  ) {
+    return;
+  }
+  beginEnemyPhase();
+}
+
+function passPlayerTurn() {
+  if (phase !== Phase.PLAYER || busy || shiftDelayPending) return;
+  playAimTick();
+  busy = true;
   beginEnemyPhase();
 }
 
@@ -628,6 +763,9 @@ function clearShiftPreview() {
     mat.color.setHex(e.baseColor);
     mat.emissive.setHex(0x000000);
     mat.emissiveIntensity = 0;
+    if (e.aggravated && e.type === EnemyType.STATIC) {
+      applyStaticAggravatedVisual(e);
+    }
   }
 }
 
@@ -697,6 +835,9 @@ function updateAimVisuals() {
       mat.color.setHex(e.baseColor);
       mat.emissive.setHex(0x000000);
       mat.emissiveIntensity = 0;
+      if (e.aggravated && e.type === EnemyType.STATIC) {
+        applyStaticAggravatedVisual(e);
+      }
     }
   }
 }
@@ -752,6 +893,8 @@ function startShift() {
       showDefeatNarrative({ fromShift: true });
       return;
     }
+
+    trySpawnBossPhase2Adds();
 
     let anyAnim = false;
     for (const { enemy, endGx, endGz } of shiftDeaths) {
@@ -874,6 +1017,9 @@ function updateDestroyAnimations(dt) {
       enemies.splice(i, 1);
     }
   }
+  if (!isWorldFrozen()) {
+    tryObjectiveWin();
+  }
 }
 
 function tickAnimations(dt) {
@@ -911,7 +1057,7 @@ function tickAnimations(dt) {
   }
 
   if (!isWorldFrozen()) {
-    maybeWin();
+    tryObjectiveWin();
   }
 }
 
@@ -1007,6 +1153,12 @@ function onKeyDown(ev) {
   }
 
   if (phase !== Phase.PLAYER || busy) return;
+
+  if (ev.code === 'KeyQ') {
+    ev.preventDefault();
+    passPlayerTurn();
+    return;
+  }
 
   let dx = 0;
   let dz = 0;
