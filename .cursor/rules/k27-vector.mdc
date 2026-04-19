@@ -1,0 +1,14 @@
+---
+description: Contexto del juego K-27 Vector (gamejam) para otras máquinas / agentes
+globs: src/**/*.js,docs/**/*.md,*.html
+---
+
+# K-27 «Vector» — contexto de proyecto
+
+- Juego web: Vite + Three.js, rejilla 8×8, turnos jugador/enemigo, teleempuje (shift) en línea recta.
+- Campaña en `src/levels/levels.js` (`LEVEL_DEFS`: `rows`, `objective`, `meta`). Parser: `src/systems/levelLoader.js`.
+- Objetivos y victoria: `src/systems/objectives.js` (`isObjectiveMet`, hack/extract/reach_exit/eliminate_all).
+- Enemigos: `EnemyType` en `src/enemy.js`. `e` = centinela: no persigue hasta que el **shift lo desplaza**; entonces `aggravated` y misma IA que `E`. Pesado empuje corto; jefe `M` con HP; patrulla `p`.
+- Ascensores: `ELEVATOR_TRANSITION_LEVEL_INDICES` en `src/constants.js`. Cabina NE `(7,0)`.
+- HUD: leyenda de suelo en `#hud-legend`; casillas tenues = alcance del shift, no victoria. Nivel hack: Q×2 en terminal o sala vacía + pisar cian. Extract: chip amarillo luego salida verde.
+- Lore breve: `docs/telequinesis-identidad.md`.
